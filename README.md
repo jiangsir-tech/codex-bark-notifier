@@ -66,6 +66,20 @@ Codex Bark Notifier 不是简单地在任务停止时调用一次 Bark。它专�
 
 > Bark Device Key 相当于推送凭据。它只应在独立 Terminal 的隐藏输入框中粘贴，不要发送到 Codex、其他 AI 对话、GitHub Issue、截图、仓库文件、命令行参数或环境变量。
 
+### 在 Bark 哪里找 Device Key
+
+打开 iPhone 上的 Bark，进入底部的“服务器”页面。页面里的推送示例地址类似：
+
+```text
+https://api.day.app/[DEVICE_KEY]/推送内容
+```
+
+`api.day.app/` 后、下一个 `/` 前的那一段就是 Device Key。只复制这一段备用，不要把完整真实地址发送给 Codex、其他 AI、GitHub Issue，或放进公开截图。
+
+![Bark Device Key 所在位置的脱敏示意图](assets/screenshots/bark-device-key-location.png)
+
+> 根据实际界面重绘的脱敏示意图。真实 Device Key 未进入此图，原始截图也不会上传到仓库。
+
 ### 方式 A：交给 Codex 安装（推荐）
 
 1. 在 iPhone 安装 Bark，确认它能收到 Bark 自带的测试通知，并在 App 中取得当前设备的 Device Key。
