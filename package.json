@@ -1,0 +1,28 @@
+{
+  "name": "codex-bark-notifier",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Reliable Bark notifications for Codex turns, approvals, blockers, and replies.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "check": "node --check src/bark-notify.mjs && node --check scripts/install.mjs && node --check scripts/uninstall.mjs",
+    "test": "node --test",
+    "test:all": "npm run check && npm test"
+  },
+  "keywords": [
+    "bark",
+    "codex",
+    "ios",
+    "macos",
+    "notifications",
+    "openai"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jiangsir-tech/codex-bark-notifier.git"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "bark": {
+    "endpoint": "https://api.day.app/push",
+    "group": "Codex",
+    "sound": "minuet",
+    "icon": "https://raw.githubusercontent.com/jiangsir-tech/codex-bark-icon/c188b28641901dbc8b3497bf9d8a8222243ef811/codex-bark-icon.png",
+    "requestTimeoutMilliseconds": 8000
+  }
+}

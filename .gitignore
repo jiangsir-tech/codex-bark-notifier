@@ -1,0 +1,16 @@
+.DS_Store
+node_modules/
+coverage/
+
+# Local installation state and secrets
+bark-device-key
+config.local.json
+installed.json
+*.log
+*.lock
+*.sent
+*.job.json
+*.backup-*
+
+# Test scratch directories
+test/tmp/
