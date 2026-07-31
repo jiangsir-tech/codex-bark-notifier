@@ -1,5 +1,7 @@
 # Codex Bark Notifier
 
+[直接安装](#4-复制给-codex-安装)
+
 ## 1. 这是做什么的
 
 目前 Mac 上的 Codex 跑完任务后，iPhone 不会收到通知，这有点影响效率。
