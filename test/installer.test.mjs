@@ -82,14 +82,21 @@ function fileMode(metadata) {
 }
 
 test("key inputs reject argv secrets and unsafe source files", async (t) => {
-  assert.throws(
-    () => parseArguments(["--key=DO_NOT_PERSIST"], "install"),
-    /forbidden/u,
-  );
-  assert.throws(
-    () => parseArguments(["DO_NOT_PERSIST"], "install"),
-    /unknown option/iu,
-  );
+  const sentinel = `DO_NOT_PERSIST_${process.hrtime.bigint()}`;
+  for (const argv of [
+    [`--key=${sentinel}`],
+    ["--key", sentinel],
+    [sentinel],
+  ]) {
+    assert.throws(
+      () => parseArguments(argv, "install"),
+      (error) => {
+        assert.match(error.message, /forbidden|unknown option/iu);
+        assert.doesNotMatch(error.message, new RegExp(sentinel, "u"));
+        return true;
+      },
+    );
+  }
 
   const context = await fixture(t);
   assert.equal(
@@ -105,6 +112,19 @@ test("key inputs reject argv secrets and unsafe source files", async (t) => {
     /group or other users/u,
   );
   await chmod(context.keyFile, 0o600);
+
+  const missingSentinel = join(
+    context.root,
+    `BARK_KEY_PATH_MUST_NOT_APPEAR_${process.hrtime.bigint()}`,
+  );
+  await assert.rejects(
+    readDeviceKeyFromFile(missingSentinel),
+    (error) => {
+      assert.match(error.message, /Unable to open the Bark key source file/u);
+      assert.doesNotMatch(error.message, /BARK_KEY_PATH_MUST_NOT_APPEAR/u);
+      return true;
+    },
+  );
 
   const linkedKey = join(context.root, "linked-key");
   await symlink(context.keyFile, linkedKey);
@@ -172,6 +192,33 @@ test("hidden interactive key input never echoes the secret", async () => {
   assert.deepEqual(rawModes, [true, false]);
   assert.doesNotMatch(outputText, new RegExp(secret, "u"));
   assert.match(outputText, /input hidden/u);
+});
+
+test("hidden interactive key input accepts key and newline in one chunk", async () => {
+  const secret = "singleChunkDeviceKey123456";
+  const rawModes = [];
+  let outputText = "";
+  const input = {
+    isTTY: true,
+    setRawMode(value) {
+      rawModes.push(value);
+    },
+    resume() {},
+    pause() {},
+    async *[Symbol.asyncIterator]() {
+      yield Buffer.from(`${secret}\n`);
+    },
+  };
+  const output = {
+    isTTY: true,
+    write(value) {
+      outputText += value;
+    },
+  };
+
+  assert.equal(await promptHiddenDeviceKey({ input, output }), secret);
+  assert.deepEqual(rawModes, [true, false]);
+  assert.doesNotMatch(outputText, new RegExp(secret, "u"));
 });
 
 test("fresh install uses direct notify, private permissions, and preserves public config on default uninstall", async (t) => {
