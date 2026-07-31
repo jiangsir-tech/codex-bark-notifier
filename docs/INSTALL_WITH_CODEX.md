@@ -1,4 +1,4 @@
-# 交给你自己的 Codex 安装
+# 通过 Codex 安装 codex-bark-notifier 指南
 
 下面的提示词适合直接复制给运行在你自己 Mac 上的 Codex。不要把 Bark Device Key 粘贴进 Codex；即使 Codex 在本机运行，对话和工具输入也可能被保存。
 
