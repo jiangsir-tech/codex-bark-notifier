@@ -74,10 +74,30 @@ test("convenience prompt supports URL plus Device Key without secondary leakage"
 
   assert.match(prompt, /四种通知的当前启用状态/u);
   assert.match(prompt, /声音、图标、分组、点击链接/u);
-  assert.match(readme, /链接和 Key 一起发给 Codex/u);
-  assert.match(readme, /Key 会进入本次对话及可能的工具调用记录/u);
+  assert.match(readme, /复制给 Codex 安装/u);
+  assert.match(readme, /会留在这次对话和可能的工具记录里/u);
   assert.match(security, /便捷自动安装/u);
   assert.match(security, /本项目无法验证、控制或删除 Codex 平台/u);
+});
+
+test("README stays focused on the four-part Codex install path", async () => {
+  const { readme } = await documentation();
+  const headings = [...readme.matchAll(/^## (.+)$/gmu)].map(
+    (match) => match[1],
+  );
+
+  assert.deepEqual(headings, [
+    "1. 这是做什么的",
+    "2. 手机上是什么效果",
+    "3. 做了哪些优化，还有哪些不足",
+    "4. 复制给 Codex 安装",
+  ]);
+  assert.match(readme, /Codex Desktop，新建一个本地任务/u);
+  assert.match(readme, /不要只告诉我怎么操作/u);
+  assert.match(readme, /<粘贴你自己的 Device Key>/u);
+  assert.doesNotMatch(readme, /方式 [ABC]/u);
+  assert.doesNotMatch(readme, /手工安装/u);
+  assert.doesNotMatch(readme, /^## (?:更新与卸载|开发与发布|常见问题)/gmu);
 });
 
 test("privacy prompt keeps Device Key in the user's hidden Terminal input", async () => {
@@ -113,23 +133,10 @@ test("documentation preserves the Device Key and Hook security model", async () 
   assert.doesNotMatch(all, /BARK_(?:KEY|TOKEN)\s*=/u);
 });
 
-test("user docs use the runtime-discovering full verification command", async () => {
-  const { readme, guide } = await documentation();
-  for (const [name, source] of [
-    ["README.md", readme],
-    ["docs/INSTALL_WITH_CODEX.md", guide],
-  ]) {
-    assert.match(
-      source,
-      /sh scripts\/install\.sh --verify/u,
-      `${name} must use the runtime-discovering full verification command`,
-    );
-    assert.doesNotMatch(
-      source,
-      /^\s*npm test\s*$/gmu,
-      `${name} must not use the partial test command`,
-    );
-  }
+test("the detailed guide uses the full runtime-discovering verification command", async () => {
+  const { guide } = await documentation();
+  assert.match(guide, /sh scripts\/install\.sh --verify/u);
+  assert.doesNotMatch(guide, /^\s*npm test\s*$/gmu);
 
   const releaseGuide = await readFile(
     join(packageRoot, "docs", "RELEASING.md"),
