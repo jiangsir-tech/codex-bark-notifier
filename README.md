@@ -2,8 +2,6 @@
 
 > Mac 上的 Codex 任务完成，手机上并不会有通知。此项目用 bark 解决了 iOS 手机上无通知的问题，并进行了些体验上的优化。
 
-Codex Bark Notifier 不是简单地在任务停止时调用一次 Bark。它专门减少长任务中的提前通知、子代理重复通知、同轮重复推送与状态误判，并让多任务更容易辨认。
-
 [5 分钟开始](#5-分钟开始) · [交给 Codex 安装](docs/INSTALL_WITH_CODEX.md) · [查看已知限制](#已知限制)
 
 ![iPhone 锁屏上的四类 Codex Bark 通知](assets/screenshots/bark-four-statuses-lock-screen.png)
@@ -34,7 +32,7 @@ Codex Bark Notifier 不是简单地在任务停止时调用一次 Bark。它专�
 - **图标、分组和声音**：默认使用 Codex 风格图标、`Codex` 分组和 `minuet` 声音。
 - **点击通知**：在 iPhone 上打开 ChatGPT 的 Codex Remote；当前不承诺精确定位到对应任务。
 
-## 它为什么不只是一条 Bark curl
+## 普通 bark 通知与针对 Codex 优化的后的 bark 通知区别
 
 | 简单通知脚本的常见问题 | 本项目的处理 |
 | --- | --- |
