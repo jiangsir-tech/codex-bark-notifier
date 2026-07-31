@@ -8,7 +8,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "check": "node --check src/bark-notify.mjs && node --check scripts/install.mjs && node --check scripts/uninstall.mjs",
+    "check": "sh -n scripts/install.sh && node --check src/bark-notify.mjs && node --check scripts/install.mjs && node --check scripts/uninstall.mjs",
     "test": "node --test",
     "test:all": "npm run check && npm test"
   },

@@ -39,7 +39,15 @@ import {
   parseJsonObject,
 } from "./lib/installer-core.mjs";
 
-export const HELP = `Usage: node scripts/install.mjs [options]
+export const HELP = `Usage: sh scripts/install.sh [options]
+
+The shell wrapper automatically finds Node.js 22+ in PATH, ChatGPT.app, or
+Codex.app. Advanced callers may run node scripts/install.mjs directly.
+
+Wrapper commands:
+  --verify           Run syntax checks and the complete test suite
+  --send-test        Send one test through the installed notifier
+  --uninstall [...]  Run the uninstaller with the remaining options
 
 Options:
   --dry-run          Inspect and print the planned changes without writing
@@ -50,6 +58,7 @@ Never pass a Bark key as a command-line value. Without --key-file, a hidden
 interactive prompt is used.`;
 
 function printPlan(plan) {
+  console.log(`Node.js: ${process.execPath} (${process.versions.node})`);
   console.log(`Codex home: ${plan.paths.codexHome}`);
   console.log(`Install root: ${plan.paths.installRoot}`);
   console.log(`notify mode: ${plan.notifyMode}`);
@@ -305,7 +314,9 @@ export async function install({
     await removeRuntimeTemporary(stage, snapshot);
     console.log("Installed Codex Bark Notifier.");
     console.log(`Backup: ${backup.directory}`);
-    console.log("Next: open Codex CLI, run /hooks, trust the PermissionRequest hook, then restart Codex Desktop.");
+    console.log("Ready now: turn completion, reply-needed, and blocked/error notifications.");
+    console.log("Approval notification configured but not trusted yet.");
+    console.log("Next: open an interactive Codex CLI, enter /hooks, review and trust the PermissionRequest hook, then restart Codex.");
     return { outcome: "installed", manifest };
   } catch (error) {
     if (plan.hooksExisted) {

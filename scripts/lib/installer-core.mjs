@@ -100,7 +100,7 @@ export function parseArguments(argv, mode) {
         "Passing a Bark key on the command line is forbidden; use --key-file or hidden interactive input.",
       );
     } else {
-      throw new Error(`Unknown option: ${argument}`);
+      throw new Error("Unknown option. Run with --help to see supported options.");
     }
   }
   return result;
@@ -175,21 +175,38 @@ export async function readDeviceKeyFromFile(
         "The Bark key source file must not be a symbolic link.",
       );
     }
-    throw error;
+    throw new Error("Unable to open the Bark key source file safely.", {
+      cause: error,
+    });
   }
   try {
+    let metadata;
+    try {
+      metadata = await Promise.all([
+        handle.stat(),
+        lstat(resolvedPath),
+        realpath(resolvedPath),
+        packageRoot ? realpath(resolve(packageRoot)) : "",
+      ]);
+    } catch (error) {
+      throw new Error("Unable to inspect the Bark key source file safely.", {
+        cause: error,
+      });
+    }
     const [
       handleInfo,
       pathInfo,
       canonicalSourcePath,
       canonicalPackageRoot,
-    ] = await Promise.all([
-      handle.stat(),
-      lstat(resolvedPath),
-      realpath(resolvedPath),
-      packageRoot ? realpath(resolve(packageRoot)) : "",
-    ]);
-    const canonicalSourceInfo = await stat(canonicalSourcePath);
+    ] = metadata;
+    let canonicalSourceInfo;
+    try {
+      canonicalSourceInfo = await stat(canonicalSourcePath);
+    } catch (error) {
+      throw new Error("Unable to inspect the Bark key source file safely.", {
+        cause: error,
+      });
+    }
     if (
       !handleInfo.isFile() ||
       !pathInfo.isFile() ||
@@ -235,9 +252,21 @@ export async function readDeviceKeyFromFile(
         "The Bark key source file must not be accessible by group or other users.",
       );
     }
-    return validateDeviceKey(await handle.readFile("utf8"));
+    let rawKey;
+    try {
+      rawKey = await handle.readFile("utf8");
+    } catch (error) {
+      throw new Error("Unable to read the Bark key source file safely.", {
+        cause: error,
+      });
+    }
+    return validateDeviceKey(rawKey);
   } finally {
-    await handle.close();
+    await handle.close().catch((error) => {
+      throw new Error("Unable to close the Bark key source file safely.", {
+        cause: error,
+      });
+    });
   }
 }
 
@@ -255,20 +284,25 @@ export async function promptHiddenDeviceKey({
   input.resume();
   let key = "";
   try {
+    let finished = false;
     for await (const chunk of input) {
       const value = textDecoder.decode(chunk);
-      if (value.includes("\u0003")) {
-        throw Object.assign(new Error("Cancelled."), { code: "EINTR" });
-      }
-      if (value.includes("\r") || value.includes("\n")) {
-        break;
-      }
       for (const character of value) {
+        if (character === "\u0003") {
+          throw Object.assign(new Error("Cancelled."), { code: "EINTR" });
+        }
+        if (character === "\r" || character === "\n") {
+          finished = true;
+          break;
+        }
         if (character === "\u007f" || character === "\b") {
           key = Array.from(key).slice(0, -1).join("");
         } else if (character >= " ") {
           key += character;
         }
+      }
+      if (finished) {
+        break;
       }
     }
   } finally {

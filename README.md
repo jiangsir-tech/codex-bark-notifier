@@ -42,7 +42,7 @@
 | 所有情况都显示“完成” | 区分结束、需要回复、受阻出错、需要批准 |
 | 多个任务同时运行时无法辨认 | 标题显示任务名称，正文显示回答摘要 |
 | 点击通知后仍要手动寻找 Codex | 携带 ChatGPT 任务链接，打开 Codex Remote |
-| 密钥写在脚本、URL 或命令行中 | Device Key 只保存在本机私有文件 |
+| 密钥写在脚本、URL 或命令行中 | 安装后的长期 Key 只保存在本机私有文件 |
 | 通知失败后无法排查 | 保留不记录密钥和对话正文的 JSONL 审计日志 |
 
 完成通知来自 Codex 官方 `agent-turn-complete` 外部通知事件；批准提醒来自官方 `PermissionRequest` Hook。Hook 只负责提醒，不会替你批准、拒绝或绕过 Codex 的信任机制。
@@ -56,13 +56,13 @@
 - 经常运行需要数分钟甚至更久的 Codex 任务；
 - 希望只在任务结束或被识别为需要介入时回到电脑前。
 
-当前版本要求 Node.js 22 或更高版本。其他操作系统尚未承诺支持。
+当前版本面向 macOS，运行时需要 Node.js 22 或更高版本。`scripts/install.sh` 会自动查找 PATH、ChatGPT.app 或 Codex.app 自带的兼容 Node.js；普通用户不需要预先手动安装 Node.js 或 Codex CLI。其他操作系统尚未承诺支持。
 
-平时可以只在 Codex Desktop 中工作；但要启用“需要你批准”通知，Mac 上还必须能在 Terminal 运行 Codex CLI，以便通过 CLI 的 `/hooks` 页面检查并信任 `PermissionRequest` Hook。先运行 `command -v codex`；如果没有输出，请按 [Codex CLI 官方安装页](https://learn.chatgpt.com/docs/codex/cli)完成安装。如果 CLI 中没有 `/hooks` 命令，请先按同一官方页面更新 CLI，再继续信任步骤。
+“本轮结束”“需要你回复”和“受阻或出错”安装后即可工作。“需要你批准”还需要用户在 Codex CLI 的 `/hooks` 页面亲自检查并信任 `PermissionRequest` Hook；安装流程会优先寻找桌面 App 自带的 CLI，不会因为 PATH 中没有 `codex` 命令就要求重新安装。Hook 信任不能也不会被自动绕过。
 
 ## 5 分钟开始
 
-> Bark Device Key 相当于推送凭据。它只应在独立 Terminal 的隐藏输入框中粘贴，不要发送到 Codex、其他 AI 对话、GitHub Issue、截图、仓库文件、命令行参数或环境变量。
+> Bark Device Key 不是 Apple ID、ChatGPT 账号密码或设备解锁凭据，但持有者可以向这台设备发送任意通知正文和点击链接，因此只使用自己的 Key，不要放进公开仓库、Issue 或截图。为了最省事，你可以主动把它交给自己 Mac 上的本地 Codex；此时 Key 会进入本次对话及可能的工具调用记录，介意留存时请改用下面的隐藏输入方式。
 
 ### 在 Bark 哪里找 Device Key
 
@@ -72,59 +72,65 @@
 https://api.day.app/[DEVICE_KEY]/推送内容
 ```
 
-`api.day.app/` 后、下一个 `/` 前的那一段就是 Device Key。只复制这一段备用，不要把完整真实地址发送给 Codex、其他 AI、GitHub Issue，或放进公开截图。
+`api.day.app/` 后、下一个 `/` 前的那一段就是 Bark Device Key。只复制这一段，并确保每位用户使用自己设备生成的 Key；不要把完整真实地址放进公开仓库、Issue 或截图。
 
 ![Bark Device Key 所在位置的脱敏示意图](assets/screenshots/bark-device-key-location.png)
 
-### 方式 A：交给 Codex 安装（推荐）
+### 方式 A：链接和 Key 一起发给 Codex（推荐）
 
-1. 在 iPhone 安装 Bark，并在 App 中取得当前设备的 Device Key。
-2. 在 Mac 的 Terminal 运行 `command -v codex`；如果没有输出，先按 [官方说明](https://learn.chatgpt.com/docs/codex/cli)安装 Codex CLI。
-3. 打开 [通过 Codex 安装 codex-bark-notifier 指南](docs/INSTALL_WITH_CODEX.md)，把其中不含密钥的完整提示词发送给 Mac 上的 Codex。
-4. Codex 会检查环境、运行测试和 `--dry-run`，到真正安装时暂停，只给你一条 Terminal 命令。
-5. 确认 `--dry-run` 与真实安装命令使用同一个 Codex Home。如果预检发现非默认 `CODEX_HOME`，真实安装命令必须保留同一路径，例如以 `env CODEX_HOME='/实际路径'` 开头；不要在独立 Terminal 中悄悄退回 `~/.codex`。
-6. 在独立的 macOS Terminal 运行该命令。看到 `Bark Device Key (input hidden):` 后粘贴 Bark Device Key；输入不显示字符是正常现象。
-7. 回到 Codex，只回复“安装器执行完成”，不要粘贴 Key 或包含 Key 的输出。
-8. Codex 最多发送一条测试通知并暂停；请根据 iPhone 的实际显示明确回复“已收到”或“未收到”，不要让 Codex 仅凭 Bark API 成功就判定手机已经收到。
-9. 在独立 macOS Terminal 运行 `codex` 启动 Codex CLI，再输入 `/hooks`，检查并信任 `PermissionRequest` Hook；如果没有该命令，先更新 CLI。随后重启 Codex Desktop。
-10. 新建一个小任务验证“本轮结束”；以后遇到真实批准请求时再验证“需要你批准”。
+1. 在 iPhone 安装 Bark，并取得当前设备的 Device Key。
+2. 在 Mac 上新建一个 **Codex 本地任务**。不要使用只能在云端运行、无法访问这台 Mac 配置的远程任务。
+3. 把下面整段发给 Codex，只替换最后一行的占位符：
 
-### 方式 B：手工安装
+```text
+请直接在我的 Mac 本地安装并验证这个项目，不要只给我操作说明：
+https://github.com/jiangsir-tech/codex-bark-notifier
 
-先确认 Node.js 和 Codex CLI：
+请按仓库中的“通过 Codex 安装 codex-bark-notifier 指南”执行：自动下载源码、检查环境、运行完整测试和 dry-run，再完成安装。优先使用 Mac 上现有 Codex/ChatGPT App 自带的 Node.js 与 Codex CLI；不要仅因 PATH 中没有命令就让我另行安装。
 
-```bash
-node --version
-command -v codex
+除我刚刚主动提供的本次对话外，Codex 后续只能把 Device Key 送入安装器隐藏 TTY 的标准输入；不要把它放进 shell 命令、命令行参数、环境变量、日志、仓库文件或最终回复，也不要重复显示它。安装后最多发送一条测试通知并暂停，等我确认手机是否实际收到。随后协助我完成 PermissionRequest Hook 的人工检查与信任；不要自动批准、写入信任状态或绕过信任。最后列出四种通知的实际格式、当前启用状态和可个性化的项目。
+
+我的 Bark Device Key：
+<粘贴你自己的 Device Key>
 ```
 
-Node.js 版本必须为 22 或更高；`command -v codex` 必须输出可执行文件路径。如果没有输出，先按 [Codex CLI 官方安装页](https://learn.chatgpt.com/docs/codex/cli)完成安装，然后运行：
+4. 标准本地任务能使用交互式 TTY 时，Codex 会自动完成环境检查、测试、预演、安装和一条真实测试推送；如果当前工具无法安全向隐藏输入发送 Key，才需要你在独立 Terminal 中粘贴一次。测试通知发出后，请根据 iPhone 实际显示回复“已收到”或“未收到”。
+5. 为启用“需要你批准”，Codex 会找到 PATH 或桌面 App 自带的 CLI，并给你一条精确启动命令。运行后输入 `/hooks`，核对 `PermissionRequest` 命令并确认信任一次；退出 Hook CLI 后重启 Codex Desktop。
+6. 安装结束时，Codex 应告诉你四种通知是否可用，并列出声音、图标、分组、点击链接、任务名称长度、摘要长度、完成延迟和状态判断规则等可调整项。
+
+完整提示词、检查标准和失败边界见 [通过 Codex 安装 codex-bark-notifier 指南](docs/INSTALL_WITH_CODEX.md)。
+
+### 方式 B：不把 Key 发进对话
+
+如果介意 Device Key 留在对话或工具历史中，只把仓库链接发给 Mac 本地 Codex，并要求它完成下载、测试和 `--dry-run`。正式安装时让 Codex 在独立 Terminal 中运行 `sh scripts/install.sh`；看到 `Bark Device Key (input hidden):` 后由你粘贴 Key，输入过程不会显示字符。之后仍由 Codex 继续验证、发送一条测试通知并引导 Hook 信任。
+
+### 方式 C：手工安装
 
 ```bash
 git clone https://github.com/jiangsir-tech/codex-bark-notifier.git
 cd codex-bark-notifier
-npm run test:all
-node scripts/install.mjs --dry-run
-node scripts/install.mjs
+sh scripts/install.sh --verify
+sh scripts/install.sh --dry-run
+sh scripts/install.sh
 ```
 
-安装器会隐藏 Device Key 输入，并备份、合并现有 Codex 配置。它不会提供 `--key <secret>` 参数。
+`scripts/install.sh` 会自动寻找 Node.js 22+，隐藏 Device Key 输入，并备份、合并现有 Codex 配置。它不会接受 `--key <secret>`。如果 PATH 中没有兼容 Node.js，它会继续尝试 ChatGPT.app 与 Codex.app 的内置运行时；全部找不到时才停止并说明缺少什么。
 
 `--dry-run` 与真实安装必须输出同一个 Codex Home。设置了非默认 `CODEX_HOME` 时，应在同一个 Terminal 会话中连续运行两条命令，避免环境变量丢失。
 
-高级的非 AI 自动化场景可使用 `node scripts/install.mjs --key-file /absolute/path/to/private-key-file`。参数接收的是仓库外的私有文件路径，不是 Key 本身；安装器会拒绝符号链接、硬链接和不安全权限。普通用户应优先使用隐藏交互输入。
+高级自动化可使用 `sh scripts/install.sh --key-file /absolute/path/to/private-key-file`。参数接收的是仓库外、权限为 `600` 的私有文件路径，不是 Key 本身；安装器会拒绝符号链接、硬链接和不安全权限，并且调用方应在安装后立即删除临时源文件。
 
 如果 `--dry-run` 报告现有 `notify` 或 Hooks 已被其他程序修改，请停止，不要强制覆盖。安装器的拒绝是为了保护已有配置。
 
 ### 安装后验证
 
 1. 以安装器输出的 Codex Home 和安装目录为准。安装器会自动使用当前 `CODEX_HOME`；未设置时才使用 `~/.codex`。
-2. 在 macOS Terminal 运行 `codex`，进入 Codex CLI 后输入 `/hooks`；确认新增命令指向上述安装目录内的通知脚本，再选择信任。如果 CLI 没有 `/hooks` 命令，请先按 [官方安装页](https://learn.chatgpt.com/docs/codex/cli)更新 CLI。
+2. 让 Codex 依次查找 PATH、`/Applications/ChatGPT.app/Contents/Resources/codex` 和 `/Applications/Codex.app/Contents/Resources/codex`。启动找到的交互式 CLI 后输入 `/hooks`；确认新增命令指向上述安装目录内的通知脚本，再选择信任。只有这些位置都没有兼容的 Hook 管理界面时，才需要按 [官方说明](https://learn.chatgpt.com/docs/codex/cli)安装或更新 CLI；这不会影响另外三类通知。
 3. 重启 Codex。
-4. 只运行一次安装后的测试命令，验证 Mac 到 Bark 的链路。下面的命令会自动使用当前 Terminal 中的 `CODEX_HOME`，未设置时使用 `~/.codex`：
+4. 只运行一次安装后的测试命令，验证 Mac 到 Bark 的链路。下面的命令会自动寻找兼容 Node.js，并使用当前 Terminal 中的 `CODEX_HOME`；未设置时使用 `~/.codex`：
 
    ```bash
-   node "${CODEX_HOME:-$HOME/.codex}/notifications/codex-bark/bark-notify.mjs" --test
+   sh scripts/install.sh --send-test
    ```
 
 5. 如果安装器输出的实际路径与当前 Terminal 的 `CODEX_HOME` 不同，请使用安装器输出的完整脚本路径。
@@ -180,7 +186,7 @@ PermissionRequest Hook
 
 ## 隐私与安全
 
-- Device Key 只保存在本机私有文件，不写入源码、Codex 配置、Hook、日志或后台任务。
+- 项目安装后的 Device Key 长期副本只保存在本机私有文件，不写入源码、Codex 配置、Hook、日志或后台任务；便捷模式中用户主动发给 Codex 的 Key 仍可能留在对话和工具记录中。
 - 审计日志不记录密钥、用户对话正文、最终回复或完整 HTTP 请求。
 - 后台任务只保存线程、轮次、状态和延迟等最小引用数据。
 - 通知正文会把清理和截断后的摘要发送到所配置的 Bark 服务；介意公共服务时可使用自建 Bark Server。
@@ -192,7 +198,7 @@ PermissionRequest Hook
 ## 常见问题
 
 - **手机没有通知**：检查 Bark 通知权限、网络、Device Key 和审计日志中的 `failed`。
-- **完成有通知，批准没有**：在 Codex CLI 中打开 `/hooks` 检查并信任 Hook，确认脚本路径存在，然后重启 Codex Desktop；如果 CLI 没有 `/hooks` 命令，请先更新 CLI。
+- **完成有通知，批准没有**：让 Codex 先查找 PATH 或桌面 App 自带的 CLI，在其中打开 `/hooks` 检查并信任 Hook，确认脚本路径存在，然后重启 Codex；只有所有候选都不支持 `/hooks` 时才需要安装或更新 CLI。
 - **一轮收到多次完成通知**：检查是否仍安装旧版 `Stop` Hook 或另一套 Bark 通知，并在日志中查找 `suppressed_subagent`、`suppressed_duplicate`。
 - **通知到了，Codex 仍在输出**：完成通知默认延迟 5～15 秒；批准通知不会延迟。
 - **图标仍是 Bark 图标**：检查公开 HTTPS 图片 URL；更新图标时更换 URL 以避开缓存。
@@ -204,9 +210,9 @@ PermissionRequest Hook
 
 ```bash
 git pull --ff-only
-npm run test:all
-node scripts/install.mjs --dry-run
-node scripts/install.mjs
+sh scripts/install.sh --verify
+sh scripts/install.sh --dry-run
+sh scripts/install.sh
 ```
 
 如果预览报告受管 `notify` 或 Hooks 已变化，请停止并人工核对，不要强制覆盖。
@@ -214,15 +220,16 @@ node scripts/install.mjs
 默认卸载保留 Device Key、日志和备份：
 
 ```bash
-node scripts/uninstall.mjs --dry-run
-node scripts/uninstall.mjs
+sh scripts/install.sh --uninstall --dry-run
+sh scripts/install.sh --uninstall
 ```
 
-确认不再需要任何私有数据时才使用 `node scripts/uninstall.mjs --purge`。`--purge` 删除一旦开始便不可逆；它只处理固定的受管路径，不会猜测性修改无法安全恢复的 Codex 配置。
+确认不再需要任何私有数据时才使用 `sh scripts/install.sh --uninstall --purge`。`--purge` 删除一旦开始便不可逆；它只处理固定的受管路径，不会猜测性修改无法安全恢复的 Codex 配置。
 
 ## 已知限制
 
 - 当前只面向并测试 macOS 与 Node.js 22+。
+- 如果安装时使用桌面 App 内置 Node.js，通知配置会记录当时的绝对路径；以后删除 App 或其内部目录发生变化时，需要重新运行安装更新路径。
 - Codex、通知进程或系统在事件产生前硬崩溃时，可能来不及通知。
 - “需要回复”和“受阻或出错”依赖文本规则，存在误判和漏判可能。
 - Codex 内部会话结构不是稳定公共 API，增强解析可能随 Codex 更新失效。

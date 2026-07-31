@@ -1,83 +1,97 @@
 # 通过 Codex 安装 codex-bark-notifier 指南
 
-下面的提示词适合直接复制给运行在你自己 Mac 上的 Codex。不要把 Bark Device Key 粘贴进 Codex；即使 Codex 在本机运行，对话和工具输入也可能被保存。
+最快的方式是把本项目链接和你自己的 Bark Device Key 一起发给 **Mac 上的 Codex 本地任务**。Codex 会自动下载源码、寻找桌面 App 自带的运行时、执行完整测试和预演、完成安装，并只发送一条测试通知。你不需要预先手动安装 Node.js 或 Codex CLI。
 
-使用前请准备：
+> Bark Device Key 不是账号密码，但持有者可以向对应设备发送任意通知和点击链接。便捷模式会让 Key 进入本次 Codex 对话及可能的工具调用记录；“本地任务”表示任务能操作这台 Mac，不代表这些记录一定只保存在本机。不能接受这项留存时，请使用后面的隐藏输入方式。
 
-1. 在 iPhone 安装 Bark。
-2. 在 Terminal 运行 `command -v codex`；如果没有输出，先按 [Codex CLI 官方安装页](https://learn.chatgpt.com/docs/codex/cli)完成安装。即使平时只用 Codex Desktop，也需要 CLI 的 `/hooks` 页面信任批准通知 Hook；如果已安装的 CLI 没有 `/hooks` 命令，请先更新 CLI。
-3. 确保这个仓库已经下载到本机，或者把仓库地址一并发给 Codex。
-4. 准备稍后打开一个独立的 macOS Terminal；Device Key 只会在那里输入。
+使用前只需准备：
 
-## 可复制提示词
+1. 在 iPhone 安装 Bark，并取得自己设备的 Bark Device Key。
+2. 在 Mac 的 Codex 中新建一个本地任务。云端或远程任务无法配置这台 Mac。
+
+## 方式 A：便捷自动安装
+
+复制下面整段，只替换 Device Key 占位符：
 
 ```text
-请直接在我的 Mac 上安装并验证 Codex Bark Notifier：
+请直接在我的 Mac 本地安装并验证 Codex Bark Notifier，不要只给我操作说明：
 
 https://github.com/jiangsir-tech/codex-bark-notifier
 
-重要安全边界：我不会把 Bark Device Key 发给你。你不得索要、读取、保存、显示或转述它，也不得让我把它粘贴到 Codex 对话、工具输入、命令行参数、环境变量、临时文件或仓库文件中。
+我的 Bark Device Key：
+<粘贴你自己的 Device Key>
 
-请在本机完成除密钥输入以外的检查和验证。具体要求：
+我选择便捷自动安装，并理解 Device Key 会进入本次 Codex 对话及可能的工具调用记录。不要在回复、命令输出或最终报告中重复、截取或展示它。
 
-1. 先阅读仓库 README、SECURITY.md、安装器帮助和当前版本说明。
-2. 确认系统是受支持的 macOS，Node.js 满足项目要求，并运行 command -v codex 确认 Codex CLI 可用；如果没有输出，停止安装并让我先按官方 Codex CLI 文档完成安装。不要把“命令存在”等同于“支持 Hooks”；如果稍后在 CLI 中找不到 /hooks，必须先让我更新 CLI。
-3. 运行 npm run test:all；测试失败时先定位原因，不要继续修改我的 Codex 配置。
-4. 先确定当前生效的 Codex Home：设置了 CODEX_HOME 时使用它，未设置时才使用 ~/.codex。检查该目录中的 config.toml、notify 和 Hooks，并在安装前创建带时间戳的备份；不得因为默认路径存在就忽略 CODEX_HOME，后续验证以安装器输出的实际路径为准。
-5. 不得覆盖已有通知器和无关 Hooks，必须使用安装器提供的合并逻辑。
-6. 先运行 node scripts/install.mjs --dry-run，确认安装目标、备份和配置合并计划合理。
-7. 到真正安装时必须暂停，只给我一条不含 Device Key 的命令。dry-run 和真实安装必须使用同一个 Codex Home；如果第 4 步发现非默认 CODEX_HOME，真实安装命令必须携带同一个非敏感 CODEX_HOME，并正确进行 shell 引用。默认路径时格式为：
+请按以下要求直接执行：
 
-   node '/仓库绝对路径/scripts/install.mjs'
+1. 先阅读仓库中的 README.md、SECURITY.md、安装器帮助和 CHANGELOG.md。
+2. 确认当前任务确实运行在这台 Mac 上；如果只能在远程环境运行，请停止，不要处理 Device Key。
+3. 自动下载仓库并确认来源是上面的公开地址。检查当前生效的 CODEX_HOME、已有 notify、Hooks 和安装清单；不得覆盖归属不明的配置，遇到冲突时安全停止并说明。
+4. 不要要求我预先单独安装 Node.js 或 Codex CLI，也不要因为 PATH 中没有 codex 或 node 就停止。优先使用 scripts/install.sh 自动查找并验证 PATH、ChatGPT.app 或 Codex.app 自带的 Node.js 22+。不要擅自安装全局运行时、修改 PATH 或创建永久软链接；确实找不到兼容运行时再报告阻断。
+5. 运行 sh scripts/install.sh --verify。测试失败时停止，不修改我的 Codex 配置。
+6. 运行 sh scripts/install.sh --dry-run，记录实际 Codex Home、安装目录和配置合并计划。真实安装必须使用同一个 CODEX_HOME。
+7. Device Key 已由我主动提供。不得把它放进 shell 命令、命令行参数、环境变量、URL、仓库文件、Codex 配置、Hook、项目日志或最终回复。请在交互式 TTY 中启动 sh scripts/install.sh，看到 Bark Device Key (input hidden): 后，只通过该进程的标准输入送入 Key；输入不得回显。如果当前工具不能安全使用交互式 TTY，请暂停并打开独立 Terminal，让我在隐藏提示中亲自粘贴，不要改用明文命令。
+8. 安装后检查脚本语法、JSON/TOML 配置、备份、安装清单和文件权限。不得读取、搜索、哈希或输出 bark-device-key 的内容；只能确认它是当前用户所有的普通非链接文件且权限为 600。
+9. 核对四种通知预览、主任务识别、子代理过滤、未知任务抑制、同轮去重，以及回答摘要只读取与 turn-id 精确匹配的 task_complete 最终回复。
+10. 最多运行一次 sh scripts/install.sh --send-test。发送后暂停并问我 iPhone 是否实际显示；只有收到我的明确确认才能说“手机已收到”，不得仅凭 HTTP 或 Bark API 成功作出判断。
+11. 收到我的确认后，自动查找 PATH、/Applications/ChatGPT.app/Contents/Resources/codex 和 /Applications/Codex.app/Contents/Resources/codex 中可用的交互式 CLI。给我一条精确启动命令；我运行后输入 /hooks，核对 PermissionRequest Hook 的 Event、Source 和 Command，再亲自选择 Trust。
+12. 不得自动信任 Hook，不得写入或伪造信任状态，不得把用户 Hook 冒充 managed Hook，不得使用绕过 Hook trust 的参数。PermissionRequest Hook 只能提醒，不得自动批准或拒绝操作。
+13. Hook 信任后提醒我退出 Hook CLI，并重启 Codex Desktop。最后报告安装与备份结果、测试数量、手机实测结果、四种通知的当前启用状态、已知限制，以及声音、图标、分组、点击链接、任务名称长度、摘要长度、完成延迟和状态判断规则等可调整项。
+14. 除真实阻断、手机收件确认和 Hook 人工信任外，不要把正常流程拆成多轮让我操作。不要修改无关项目，也不要提交、推送或公开任何本机配置。
 
-   非默认路径时格式为：
-
-   env CODEX_HOME='/实际 Codex Home' node '/仓库绝对路径/scripts/install.mjs'
-
-   让我在独立的 macOS Terminal 中亲自运行。你不得替我启动交互安装器。提醒我确认真实安装输出的 Codex Home 与 dry-run 完全相同；如果不同，立即停止，不输入 Device Key。
-8. 提醒我看到 Bark Device Key (input hidden): 后再粘贴 Key；输入不显示字符是正常现象。安装结束后，我只回复“安装器执行完成”，不粘贴 Key 或包含 Key 的输出。
-9. 收到我的完成回复后，再检查脚本语法、JSON/TOML 配置、文件权限和备份路径。不得读取、搜索、哈希或输出 bark-device-key 的内容；只能验证路径存在、是普通非符号链接文件、属于当前用户且权限为 600。
-10. 核对四种通知预览严格符合：
-
-   ✅ [任务名称]本轮结束
-   💬回答摘要
-
-   🔁 [任务名称]需要你回复
-   💬回答摘要
-
-   ⛔ [任务名称]受阻或出错
-   💬回答摘要
-
-   🔐 [任务名称]需要你批准
-   💬本轮请求简称
-
-11. 验证回答摘要只读取与通知 turn-id 精确匹配的 task_complete 最终回复；缺失时回退本轮请求简称，不能读取下一轮或中间进度。再验证主任务完成事件、子代理过滤、未知任务抑制和相同事件去重。
-12. 最多发送一条明确标注的真实 Bark 测试通知，不要制造通知风暴。发送后必须暂停并询问我手机是否实际显示；只有收到我的明确确认后，才能报告“手机已收到”，不得仅凭 HTTP 或 Bark API 返回成功作出判断。
-13. PermissionRequest Hook 只能发送提醒，不得自动批准或拒绝操作。
-14. 告诉我需要在 Codex CLI 的 `/hooks` 页面检查和信任哪个 Hook；不要把桌面任务输入框误写成 Hook 管理入口，也不要替我绕过信任机制。
-15. 提醒我重启 Codex，再新建一个小任务测试“本轮结束”，并触发一次真实批准请求测试“需要你批准”。
-16. 不要修改这个仓库以外的无关项目，也不要提交、推送或公开任何本机配置。
-
-完成后请汇报：
-
-- 安装和修改了哪些文件；
-- 备份保存在哪里；
-- 是否保留了已有 notify 和 Hooks；
-- 项目测试、配置检查、主任务/子代理/去重测试的结果；
-- 手机是否收到唯一一条测试通知（只能依据我的明确确认）；
-- 还需要我在 Codex CLI 中完成哪些 `/hooks` 信任或重启步骤；
-- 当前版本的已知限制。
-
-最终回复中确认你从未接收、读取或输出 Bark Device Key。
+最终回复不得包含 Device Key。
 ```
 
-## 安装后由你完成
+标准本地任务能使用交互式 TTY、且没有配置冲突时，你通常只需要做两次确认：
 
-Codex 完成预检并暂停后，你需要亲自完成四件事：
+1. 测试通知发出后，看一眼 iPhone，回复“已收到”或“未收到”。
+2. 在 Codex CLI 的 `/hooks` 页面核对 `PermissionRequest` Hook，并选择信任。
 
-1. 在独立的 macOS Terminal 运行 Codex 给出的安装命令，在隐藏提示后输入 Device Key。
-2. 回到 Codex 只回复“安装器执行完成”，让它继续做非密钥内容验证。
-3. Codex 发送唯一一条测试通知并暂停后，根据 iPhone 的实际显示明确回复“已收到”或“未收到”。
-4. 在 Terminal 运行 `codex`，进入 Codex CLI 后输入 `/hooks`，检查并信任新增 Hook；如果没有 `/hooks` 命令，先按官方 Codex CLI 页面更新 CLI。重启 Codex Desktop 后再进行普通任务和批准请求测试。
+Codex 的文件写入或联网操作仍可能触发其正常权限询问；这些是 Codex 自身的安全机制，不应被安装脚本绕过。
 
-信任 Hook 前，应确认命令指向你本机安装的 Node 与 Codex Bark Notifier 脚本。不要信任来源不明或包含陌生命令的 Hook。
+## 方式 B：隐藏输入，不把 Key 发进对话
+
+如果不希望 Device Key 进入 Codex 对话，只发送仓库链接，并附上这句话：
+
+```text
+请在我的 Mac 本地安装并验证这个项目，但我不会把 Bark Device Key 发进对话：
+https://github.com/jiangsir-tech/codex-bark-notifier
+
+请自动阅读文档、下载源码，运行 sh scripts/install.sh --verify 和 sh scripts/install.sh --dry-run。不要要求我预先单独安装 Node.js 或 Codex CLI；先探测 PATH、ChatGPT.app 和 Codex.app 自带的兼容运行时。
+
+预检全部通过后，在独立 Terminal 中启动 sh scripts/install.sh，让我只在 Bark Device Key (input hidden): 提示后亲自粘贴 Key。不要索要、读取、搜索、哈希、保存或转述 Key。安装后继续验证配置和权限，最多运行一次 sh scripts/install.sh --send-test，并引导我在 /hooks 中人工检查和信任 PermissionRequest Hook。不得自动信任、绕过信任或自动批准操作。
+```
+
+隐藏输入时，字符不显示是正常现象。安装结束后只告诉 Codex“安装器执行完成”，不要粘贴 Key 或包含 Key 的输出。
+
+## Codex 最终应交付什么
+
+完成安装和人工信任后，Codex 应给用户一份简短报告：
+
+- 使用的 Node.js 路径与版本，以及完整测试结果；
+- 实际 Codex Home、安装目录、配置修改和备份位置；
+- 是否保留了已有 `notify` 和其他 Hooks；
+- 唯一测试通知是否由用户确认在 iPhone 显示；
+- 四种通知的格式和启用状态：
+
+  ```text
+  ✅ [任务名称]本轮结束
+  💬回答摘要
+
+  🔁 [任务名称]需要你回复
+  💬回答摘要
+
+  ⛔ [任务名称]受阻或出错
+  💬回答摘要
+
+  🔐 [任务名称]需要你批准
+  💬本轮请求简称
+  ```
+
+- 可按个人偏好调整的项目：声音、图标、分组、点击链接、任务名称长度、摘要长度、完成延迟和状态判断规则；
+- 当前已知限制，以及以后如何更新或卸载。
+
+如果找不到支持 `/hooks` 的 CLI，Codex 应明确报告：前三种通知已经可用，只有“需要你批准”暂未启用。它不应因此撤销已经成功安装的其他功能。
+
+信任 Hook 前，应确认 `Event` 是 `PermissionRequest`，`Source` 是用户配置，`Command` 指向本机安装目录中的通知脚本。项目不会替你信任 Hook，也不会替你批准原始操作。

@@ -18,7 +18,9 @@
 7. 检查公开图标 URL、官方文档链接和仓库内部链接。
 8. 准备脱敏截图；截图不得出现 Device Key、用户名、项目私有名称或其他通知内容。
 9. 确认 README 明确写出非 OpenAI 官方项目、硬崩溃边界和内部元数据非稳定 API。
-10. 让至少一位未参与开发的 macOS + Bark 用户按公开文档完成安装与卸载。
+10. 在 PATH 中没有 Node.js 和 `codex`、但安装了受支持 ChatGPT.app 或 Codex.app 的 Mac 上，验证 `scripts/install.sh` 能发现 App 内置 Node.js，并确认 Codex 安装提示词能另行找到 App 内置 CLI、给出准确的 Hook 管理启动命令。
+11. 分别走通“链接 + Device Key 发给本地 Codex”和“Terminal 隐藏输入”两种安装方式；确认 Key 不进入命令参数、环境变量、仓库、配置、日志或最终报告。
+12. 让至少一位未参与开发的 macOS + Bark 用户按公开文档完成安装与卸载。
 
 ## v0.1.0 发布流程
 
@@ -35,8 +37,8 @@
 5. 在 GitHub 创建 `v0.1.0` Release，正文包含：
    - 解决的核心问题；
    - 四种通知状态；
-   - 支持的平台和 Node.js 版本；
-   - 安装与 Codex CLI `/hooks` 信任入口；
+   - 支持的平台、Node.js 版本和桌面 App 内置运行时自动发现；
+   - 两种安装方式与 Codex CLI `/hooks` 人工信任入口；
    - 已知限制；
    - 从旧个人脚本迁移时的注意事项。
 6. Release 标记为正式版前，再从 GitHub 下载发布内容，在独立临时目录运行一次 `npm run test:all`。
