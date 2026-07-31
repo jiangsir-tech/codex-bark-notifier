@@ -88,7 +88,7 @@ test("README stays focused on the four-part Codex install path", async () => {
 
   assert.deepEqual(headings, [
     "1. 这是做什么的",
-    "2. 手机上是什么效果",
+    "2. iPhone 上的通知效果",
     "3. 做了哪些优化，还有哪些不足",
     "4. 复制给 Codex 安装",
   ]);

@@ -2,11 +2,11 @@
 
 ## 1. 这是做什么的
 
-Mac 上的 Codex 跑完任务后目前 iPhone 上不会有通知，这个有点影响效率。
+目前 Mac 上的 Codex 跑完任务后，iPhone 不会收到通知，这有点影响效率。
 
-这个项目借助 iPhone 上的 bark 软件解决了这个问题，并进行了通知上的优化。
+这个项目借助手机上的 Bark 解决了这个问题，还针对通知体验做了一些优化。
 
-## 2. 手机上是什么效果
+## 2. iPhone 上的通知效果
 
 ![iPhone 锁屏上的四类 Codex Bark 通知](assets/screenshots/bark-four-statuses-lock-screen.png)
 
@@ -26,7 +26,7 @@ Mac 上的 Codex 跑完任务后目前 iPhone 上不会有通知，这个有点�
 💬本轮请求简称
 ```
 
-通知里会显示任务名称和简短结果。点击通知，可以打开 ChatGPT 的 Codex Remote。
+通知里会显示任务名称和简短结果。点击后，会跳转到 iPhone 上 ChatGPT 的 Codex 页面。
 
 ## 3. 做了哪些优化，还有哪些不足
 
@@ -44,7 +44,7 @@ Mac 上的 Codex 跑完任务后目前 iPhone 上不会有通知，这个有点�
 
 目前还有这些不足：
 
-- 现在主要测试的是 macOS、iPhone 和 Bark。
+- 目前只测试了 macOS、iPhone 和 Bark，还没有测试 Windows 或 Android。
 - “需要回复”和“受阻或出错”靠文本判断，偶尔可能判断错。
 - Codex 或系统突然崩溃时，可能来不及发送通知。
 - 点击通知只能进入 Codex Remote，暂时不能保证打开对应任务。
