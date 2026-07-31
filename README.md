@@ -76,16 +76,14 @@ https://api.day.app/[DEVICE_KEY]/推送内容
 
 ![Bark Device Key 所在位置的脱敏示意图](assets/screenshots/bark-device-key-location.png)
 
-> 根据实际界面重绘的脱敏示意图。真实 Device Key 未进入此图，原始截图也不会上传到仓库。
-
 ### 方式 A：交给 Codex 安装（推荐）
 
-1. 在 iPhone 安装 Bark，确认它能收到 Bark 自带的测试通知，并在 App 中取得当前设备的 Device Key。
+1. 在 iPhone 安装 Bark，并在 App 中取得当前设备的 Device Key。
 2. 在 Mac 的 Terminal 运行 `command -v codex`；如果没有输出，先按 [官方说明](https://learn.chatgpt.com/docs/codex/cli)安装 Codex CLI。
-3. 打开 [Codex 安装指南](docs/INSTALL_WITH_CODEX.md)，把其中不含密钥的完整提示词发送给 Mac 上的 Codex。
+3. 打开 [通过 Codex 安装 codex-bark-notifier 指南](docs/INSTALL_WITH_CODEX.md)，把其中不含密钥的完整提示词发送给 Mac 上的 Codex。
 4. Codex 会检查环境、运行测试和 `--dry-run`，到真正安装时暂停，只给你一条 Terminal 命令。
 5. 确认 `--dry-run` 与真实安装命令使用同一个 Codex Home。如果预检发现非默认 `CODEX_HOME`，真实安装命令必须保留同一路径，例如以 `env CODEX_HOME='/实际路径'` 开头；不要在独立 Terminal 中悄悄退回 `~/.codex`。
-6. 在独立的 macOS Terminal 运行该命令。看到 `Bark Device Key (input hidden):` 后粘贴 Device Key；输入不显示字符是正常现象。
+6. 在独立的 macOS Terminal 运行该命令。看到 `Bark Device Key (input hidden):` 后粘贴 Bark Device Key；输入不显示字符是正常现象。
 7. 回到 Codex，只回复“安装器执行完成”，不要粘贴 Key 或包含 Key 的输出。
 8. Codex 最多发送一条测试通知并暂停；请根据 iPhone 的实际显示明确回复“已收到”或“未收到”，不要让 Codex 仅凭 Bark API 成功就判定手机已经收到。
 9. 在独立 macOS Terminal 运行 `codex` 启动 Codex CLI，再输入 `/hooks`，检查并信任 `PermissionRequest` Hook；如果没有该命令，先更新 CLI。随后重启 Codex Desktop。
