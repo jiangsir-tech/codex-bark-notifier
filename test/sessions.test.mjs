@@ -10,6 +10,7 @@ import {
   notificationContext,
   resolvedThreadKind,
   taskNameFromIndex,
+  THREAD_KIND_RETRY_DELAYS,
   threadKind,
 } from "../src/lib/sessions.mjs";
 import {
@@ -91,6 +92,14 @@ test("resolvedThreadKind retries until session metadata appears", async (t) => {
 
   assert.equal(kind, "main");
   assert.equal(sleeps, 1);
+});
+
+test("default thread-kind retry window is long enough for late transcripts", () => {
+  assert.deepEqual(THREAD_KIND_RETRY_DELAYS, [500, 1_000, 2_000, 4_000]);
+  assert.equal(
+    THREAD_KIND_RETRY_DELAYS.reduce((total, delay) => total + delay, 0),
+    7_500,
+  );
 });
 
 test("PermissionRequest from a subagent maps to parent task and conversation", async (t) => {

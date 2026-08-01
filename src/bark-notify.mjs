@@ -13,6 +13,7 @@ import {
   resolvedThreadKind,
   sessionPathForThreadId,
   taskNameFromIndex,
+  THREAD_KIND_RETRY_DELAYS,
 } from "./lib/sessions.mjs";
 import {
   acquireEventLock,
@@ -31,9 +32,9 @@ import {
   completionDelayMilliseconds,
   conversationNameFromPayload,
   formatNotification,
+  notificationBodyFromAssistantReply,
   parseJson,
   payloadIds,
-  shortenAssistantSummary,
 } from "./lib/text.mjs";
 
 export const PATHS = runtimePaths(import.meta.url);
@@ -78,8 +79,9 @@ export async function buildTurnNotification(payload, paths = PATHS) {
   );
   const conversationName = conversationNameFromPayload(payload);
   const status = classifyLastReply(payload?.["last-assistant-message"]);
-  const answerSummary = shortenAssistantSummary(
+  const answerSummary = notificationBodyFromAssistantReply(
     payload?.["last-assistant-message"],
+    status,
     conversationName,
   );
   return withCodexRemoteUrl(
@@ -139,6 +141,7 @@ async function buildReferencedNotification(job, status, paths) {
           transcriptPath,
           job.turn_id,
           conversationName,
+          { status },
         )
       : conversationName;
   return withCodexRemoteUrl(
@@ -307,7 +310,9 @@ export async function scheduleTurnNotification(
     return { outcome: "suppressed_subagent" };
   }
   if (kind === "unknown") {
-    await writeAudit(paths, payload, "suppressed_unknown", { retries: 3 });
+    await writeAudit(paths, payload, "suppressed_unknown", {
+      retries: THREAD_KIND_RETRY_DELAYS.length,
+    });
     return { outcome: "suppressed_unknown" };
   }
 

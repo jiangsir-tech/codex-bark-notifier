@@ -264,6 +264,21 @@ function summarySegments(value) {
     );
 }
 
+function answerSummarySegments(value) {
+  return String(value ?? "")
+    .split(/\r?\n/u)
+    .flatMap(
+      (line) => line.match(/[^。！？!?]+(?:[。！？!?]+|$)/gu) ?? [],
+    );
+}
+
+function stripListMarker(value) {
+  return String(value ?? "").replace(
+    /^(?:[-*+>•]\s*|\d+[)、]\s*|\d+\.(?!\d)\s*)/u,
+    "",
+  );
+}
+
 function truncateSummaryText(rawText, fallback) {
   const safeFallback = stripBidiControls(fallback);
   const candidate =
@@ -335,13 +350,11 @@ export function shortenAssistantSummary(rawText, fallback = "未生成摘要") {
     .replace(/\bhttps?:\/\/[^\s<>"'`,;，。！？；、]+/giu, " ")
     .replace(/::(?:code-comment|created-thread)\{[^}\n]*\}/gu, " ");
 
-  const candidates = summarySegments(cleanedText)
+  const candidates = answerSummarySegments(cleanedText)
     .map((segment) =>
       redactSensitiveSummaryValues(
-        segment
-          .trim()
+        stripListMarker(segment.trim())
           .replace(/^#{1,6}\s*/u, "")
-          .replace(/^(?:[-*+>•]|\d+[.)、])\s*/u, "")
           .replace(
             /^(?:好的|可以|明白了?|理解(?:了)?|没问题|收到|好哒?|当然|行)[，,。!！\s]+/u,
             "",
@@ -519,18 +532,30 @@ const STATUS_OPTIONAL_CONTEXT_CLAUSE_PATTERN =
   /^(?:(?:如果|若|如)(?:你)?(?:愿意|有需要|需要|想(?:要)?|方便|有空)(?:的话)?|你愿意的话|方便(?:的话)?|有空(?:的话)?|有问题|有需要|需要时|方便时|你可以)/u;
 const STATUS_EXPLICIT_OPTIONAL_ENDING_PATTERN =
   /(?:本轮)?(?:无需|不用|不必|不需要)回复|也可以不(?:发|回复|告诉|操作|确认)|不(?:发|回复|告诉|操作|确认).{0,8}(?:也)?(?:可以|行)/u;
+const STATUS_NO_USER_ACTION_PATTERN =
+  /(?:(?:你)?(?:不需要|无需|不用|不必)(?:你)?(?:再)?(?:做|进行)?(?:任何)?(?:操作|确认|处理|执行|验收|测试|提供|上传|发送))/u;
 const STATUS_NON_FEEDBACK_ACTION_PATTERN =
-  /(?:确认|提供|上传|授权|点击|选择|操作|查看|打开|安装|下载|输入|填写|粘贴|发送|重启)/u;
+  /(?:确认|提供|上传|授权|点击|选择|操作|查看|打开|安装|下载|输入|填写|粘贴|发送|重启|执行|校准|验收|测试|实测|回放|按下?|截图|拍摄)/u;
 const STATUS_DIRECT_REQUEST_CLAUSE_PATTERNS = [
-  /^(?:请(?:你)?|麻烦(?:你)?)(?:先|再|现在|接下来)?[^。！？!?；;\n]{0,48}(?:回复|确认|提供|上传|授权|点击|选择|操作|查看|打开|安装|下载|输入|填写|粘贴|发送|重启|告诉)/u,
-  /^需要你(?:先|再|来|去)?[^。！？!?；;\n]{0,48}(?:回复|确认|提供|上传|授权|点击|选择|操作|查看|打开|安装|下载|输入|填写|粘贴|发送|重启|告诉)/u,
-  /^(?:等待|等)你(?:确认|回复|操作|选择|提供|上传|授权|点击)/u,
+  /^(?:(?:现在|接下来)?请(?:你)?|麻烦(?:你)?)(?:先|再|现在|接下来)?[^。！？!?；;\n]{0,64}(?:回复|确认|提供|上传|授权|点击|选择|操作|查看|打开|安装|下载|输入|填写|粘贴|发送|重启|告诉|执行|校准|验收|测试|实测|测(?:试)?|回放|按下?|截图|拍摄|做)/u,
+  /^需要你(?:先|再|来|去)?[^。！？!?；;\n]{0,64}(?:回复|确认|提供|上传|授权|点击|选择|操作|查看|打开|安装|下载|输入|填写|粘贴|发送|重启|告诉|执行|校准|验收|测试|实测|测(?:试)?|回放|按下?|截图|拍摄|做)/u,
+  /^(?:等待|等)你(?:确认|回复|操作|选择|提供|上传|授权|点击|按下?|测试|验收)/u,
   /^把[^。！？!?；;\n]{1,48}(?:告诉我|发给我|回复我)/u,
   /^(?:告诉我|回复我|发给我)/u,
+  /^回复(?:\s|[：:]|$)/u,
+  /^(?:只需|只需要)[^。！？!?；;\n]{0,48}(?:回复(?:我)?|告诉我|发给我|确认|上传|提供|操作)/u,
   /^(?:随后|然后|之后|接着|再|回来)(?:请)?(?:把[^。！？!?；;\n]{0,40})?(?:告诉我|发给我|回复我)/u,
-  /^(?:(?:操作|测试|验证|试听|查看|选择|处理|设置|安装|下载|上传|修改|配置)?完成(?:以后|后)|(?:听|看|试|测试|验证|操作|处理|设置)完|选好|确认好|准备好)(?:再|请|回来)?[^。！？!?；;\n]{0,32}(?:告诉我|发给我|回复我)/u,
+  /^(?:(?:操作|测试|验证|试听|查看|选择|处理|设置|安装|下载|上传|修改|配置)?完成(?:以后|后)|(?:听|看|试|测试|验证|操作|处理|设置|修改)完|改完(?:保存)?|选好|确认好|准备好)(?:再|请|回来)?[^。！？!?；;\n]{0,40}(?:告诉我|发给我|回复(?:我)?)/u,
+  /^[^。！？!?；;\n]{0,32}(?:以后|后)(?:再|请)?(?:回复(?:我)?|告诉我|发给我)/u,
   /^你(?:先|再)?[^，,。！？!?；;\n]{0,24}(?:听完|看完|试完|测试完|验证完|操作完|处理完|设置完|选好|确认好|准备好|完成后|完成以后)[^，,。！？!?；;\n]{0,24}(?:告诉我|发给我|回复我)/u,
-  /^你(?:先|再|现在|接下来|只需|只需要|需要)[^。！？!?；;\n]{0,40}(?:点击|打开|选择|上传|下载|填写|输入|粘贴|授权|确认|回复|操作|重启|安装|发送)/u,
+  /^你(?:先|再|现在|接下来|只需|只需要|需要)[^。！？!?；;\n]{0,48}(?:点击|打开|选择|上传|下载|填写|输入|粘贴|授权|确认|回复|操作|重启|安装|发送|执行|校准|验收|测试|实测|回放|按下?|截图|拍摄)/u,
+];
+const STATUS_CONTINUATION_REQUEST_PATTERNS = [
+  /(?:^|[，,；;：:\s])(?:有[^。！？!?；;\n]{0,32})?需要你确认(?:[^。！？!?；;\n]{0,48})/u,
+  /(?:^|[，,；;：:\s])你确认[^。！？!?；;\n]{0,32}(?:的话|后)[^。！？!?；;\n]{0,48}我(?:就|会)/u,
+  /(?:^|[，,；;：:\s])(?:下一步|接下来)(?![^。！？!?；;\n]{0,20}(?:我会|我将|系统会|自动))[^。！？!?；;\n]{0,64}(?:发给我|提供给我|上传给我|截图给我|回复|确认|提交给我)/u,
+  /(?:^|[，,；;：:\s])(?:下一张(?:先|优先)?|最优先|优先)(?:请)?发(?!送)/u,
+  /(?:完成(?:以后|后)|改完(?:保存)?后)[^。！？!?；;\n]{0,48}(?:回复(?:我)?|告诉我|发给我)/u,
 ];
 
 function statusSentences(value) {
@@ -541,10 +566,8 @@ function statusSentences(value) {
         line.match(/[^。！？!?]+(?:[。！？!?]+|$)/gu) ?? [],
     )
     .map((sentence) =>
-      sentence
-        .trim()
+      stripListMarker(sentence.trim())
         .replace(/^#{1,6}\s*/u, "")
-        .replace(/^(?:[-*+>•]|\d+[.)、])\s*/u, "")
         .trim(),
     )
     .filter(Boolean);
@@ -589,6 +612,198 @@ function hasRequiredUserAction(value) {
   return statusSentences(value).some(sentenceNeedsUserAction);
 }
 
+function hasContinuationRequest(value) {
+  return statusSentences(value).some((sentence) => {
+    if (
+      STATUS_NEGATED_ACTION_CLAUSE_PATTERN.test(sentence) ||
+      STATUS_EXPLICIT_OPTIONAL_ENDING_PATTERN.test(sentence)
+    ) {
+      return false;
+    }
+    return STATUS_CONTINUATION_REQUEST_PATTERNS.some((pattern) =>
+      pattern.test(sentence),
+    );
+  });
+}
+
+function requiredActionCandidates(value) {
+  return statusSentences(value).flatMap((sentence) => {
+    const inheritedOptional =
+      STATUS_OPTIONAL_CONTEXT_CLAUSE_PATTERN.test(sentence);
+    const fragments = [
+      {
+        text: sentence,
+        inheritedOptional: false,
+        wholeSentence: true,
+      },
+    ];
+    const clauses = sentence
+      .split(/(?<!\d)[，,；;：:](?!\d)/u)
+      .map((clause) => clause.trim())
+      .filter(Boolean);
+    if (clauses.length > 1) {
+      fragments.push(
+        ...clauses.map((text) => ({
+          text,
+          inheritedOptional,
+          wholeSentence: false,
+        })),
+      );
+    }
+    return fragments;
+  });
+}
+
+function requiredActionPriority(value, inheritedOptional = false) {
+  const text = String(value ?? "");
+  let priority = 0;
+
+  if (
+    /(?:回复我|告诉我|发给我|回复(?:\s|[“「『"'`：:]|$))/u.test(text)
+  ) {
+    priority += 100;
+  }
+  if (/需要你确认/u.test(text)) {
+    priority += 70;
+  }
+  if (
+    /你确认[^。！？!?；;\n]{0,32}(?:的话|后)[^。！？!?；;\n]{0,48}我(?:就|会)/u.test(
+      text,
+    )
+  ) {
+    priority += 90;
+  }
+  if (/(?:下一步|下一张|接下来|最优先|优先)/u.test(text)) {
+    priority += 60;
+  }
+  if (/(?:^|[，,；;：:\s])(?:(?:现在|接下来)?请|麻烦)/u.test(text)) {
+    priority += 50;
+  }
+  if (
+    /(?:完成(?:以后|后)|改完(?:保存)?后|松开后|框选后|验收后)[^。！？!?；;\n]{0,48}(?:回复(?:我)?|告诉我|发给我)/u.test(
+      text,
+    )
+  ) {
+    priority += 55;
+  }
+  if (/(?:验收|实测|测试|回放|校准)/u.test(text)) {
+    priority += 10;
+  }
+  if (/(?:截图|照片|文件|打码|PDF|链接|数字|名称|英文)/iu.test(text)) {
+    priority += 5;
+  }
+  if (/[？?]\s*$/u.test(text)) {
+    priority += 20;
+  }
+  if (
+    inheritedOptional ||
+    STATUS_OPTIONAL_CONTEXT_CLAUSE_PATTERN.test(text)
+  ) {
+    priority -= 80;
+  }
+
+  return priority;
+}
+
+function compactRequiredAction(value) {
+  const text = String(value ?? "").trim();
+  if (
+    !/(?:回复我|告诉我|发给我|回复(?:\s|[“「『"'`：:]|$))/u.test(text)
+  ) {
+    return text;
+  }
+
+  return text.replace(
+    /[，,；;]\s*(?:然后|随后|之后|接着)?我(?:会|将|就|再|继续)[^。！？!?]*[。！？!?：:]?\s*$/u,
+    "。",
+  );
+}
+
+function punctuateRequiredAction(value) {
+  const text = String(value ?? "")
+    .trim()
+    .replace(/[，,；;：:]+$/u, "");
+  if (!text || /[。！？!?]$/u.test(text)) {
+    return text;
+  }
+  return `${text}。`;
+}
+
+export function notificationBodyFromAssistantReply(
+  rawText,
+  status,
+  fallback = "未生成摘要",
+) {
+  const label = typeof status === "string" ? status : status?.label;
+  if (label !== "需要你回复") {
+    return shortenAssistantSummary(rawText, fallback);
+  }
+
+  const safeFallback = shortenAssistantSummary("", fallback);
+  const cleanedText = stripBidiControls(rawText)
+    .replace(/<oai-mem-citation>[\s\S]*?<\/oai-mem-citation>/giu, " ")
+    .replace(/<!--[\s\S]*?-->/gu, " ")
+    .replace(/```[\s\S]*?```/gu, " ")
+    .replace(/~~~[\s\S]*?~~~/gu, " ")
+    .replace(/<image\b[\s\S]*?<\/image>/giu, " ")
+    .replace(/!\[[^\]]*\]\([^)]*\)/gu, " ")
+    .replace(/\[([^\]]+)\]\([^)]*\)/gu, "$1")
+    .replace(/\bhttps?:\/\/[^\s<>"'`,;，。！？；、]+/giu, " ")
+    .replace(/::(?:code-comment|created-thread)\{[^}\n]*\}/gu, " ");
+  const candidates = requiredActionCandidates(cleanedText)
+    .map(({ text, inheritedOptional, wholeSentence }) => ({
+      inheritedOptional,
+      wholeSentence,
+      text: redactSensitiveSummaryValues(
+        stripListMarker(text.trim())
+          .replace(/^#{1,6}\s*/u, "")
+          .replace(/[*_`~]/gu, "")
+          .replace(/\s+/gu, " ")
+          .trim(),
+      ),
+    }))
+    .filter(({ text }) => Boolean(text))
+    .filter(({ text }) => !containsAbsoluteLocalPath(text))
+    .filter(({ text }) => {
+      const classificationText = textForStatusClassification(text);
+      return (
+        hasRequiredUserAction(classificationText) ||
+        hasContinuationRequest(classificationText)
+      );
+    })
+    .map((candidate) => ({
+      ...candidate,
+      priority: requiredActionPriority(
+        candidate.text,
+        candidate.inheritedOptional,
+      ) +
+        (candidate.wholeSentence && /[？?]\s*$/u.test(candidate.text)
+          ? 10
+          : 0),
+    }));
+  const candidate = candidates.reduce((best, current) => {
+    if (!best || current.priority > best.priority) {
+      return current;
+    }
+    if (
+      current.priority === best.priority &&
+      Array.from(current.text).length < Array.from(best.text).length
+    ) {
+      return current;
+    }
+    return best;
+  }, null)?.text;
+  return candidate
+    ? truncateSummaryText(
+        sanitizeNotificationText(
+          punctuateRequiredAction(compactRequiredAction(candidate)),
+          safeFallback,
+        ),
+        safeFallback,
+      )
+    : shortenAssistantSummary(rawText, fallback);
+}
+
 export function classifyLastReply(lastReply) {
   const cleanedReply = textForStatusClassification(lastReply);
   const summary = textForStatusClassification(
@@ -596,10 +811,8 @@ export function classifyLastReply(lastReply) {
   );
   const endingSegments = summarySegments(cleanedReply)
     .map((segment) =>
-      segment
-        .trim()
+      stripListMarker(segment.trim())
         .replace(/^#{1,6}\s*/u, "")
-        .replace(/^(?:[-*+>•]|\d+[.)、])\s*/u, "")
         .replace(/[*_~]/gu, "")
         .trim(),
     )
@@ -621,9 +834,14 @@ export function classifyLastReply(lastReply) {
     return { icon: "⛔", label: "受阻或出错" };
   }
 
+  if (STATUS_NO_USER_ACTION_PATTERN.test(finalSegment)) {
+    return { icon: "✅", label: "本轮结束" };
+  }
+
   if (
     hasRequiredUserAction(summary) ||
-    hasRequiredUserAction(decisiveEnding)
+    hasRequiredUserAction(decisiveEnding) ||
+    hasContinuationRequest(cleanedReply)
   ) {
     return { icon: "🔁", label: "需要你回复" };
   }

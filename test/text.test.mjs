@@ -7,6 +7,7 @@ import {
   completionDelayMilliseconds,
   conversationNameFromPayload,
   formatNotification,
+  notificationBodyFromAssistantReply,
   normalizeTaskName,
   sanitizeNotificationText,
   shortenAssistantSummary,
@@ -183,6 +184,144 @@ test("reply classification prioritizes errors, then actions, then completion", (
       icon: "🔁",
       label: "需要你回复",
     },
+  );
+});
+
+test("reply classification covers real continuation requests without optional false positives", () => {
+  const replies = [
+    "build 8 已运行，请重复最后一次双项验收。",
+    "本地 README 已存在。改完保存后，只需告诉我“改好了”，我会统一处理。",
+    "录屏权限已确认，请先做一次键盘验收。",
+    "系统正在等待你的 Touch ID 授权。请现在按一下 Touch ID。完成后回复“好了”，我继续核验。",
+    "这一轮只做了检查，没有修改。你确认的话，我就按这组参数直接调整并逐帧验收。",
+    "当前数据已整理。下一步先把这两组信息发给我，截图即可。",
+    "有一个隐私变化需要你确认。你确认允许保存后，我就可以实现。",
+    "不用一次发齐，可以逐个平台发。最优先发未来30天内最早到期的那笔。",
+    "两笔账单已经并入。下一张优先发京东金条的还款计划。",
+  ];
+  for (const reply of replies) {
+    assert.deepEqual(classifyLastReply(reply), {
+      icon: "🔁",
+      label: "需要你回复",
+    });
+  }
+
+  for (const reply of [
+    "本轮已经完成。如果方便，可以以后再发截图；无需回复。",
+    "这里是在解释流程：用户确认后，程序就会继续执行。",
+    "建议下一步优化通知摘要，但这轮不需要你确认。",
+    "如果你愿意，我可以继续优化。",
+    "如果方便，再截提前结清页面也行；本轮无需回复。",
+    "你可以在主微信分别做一次键盘和语音输入，随后查看结果。",
+    "后面可以优化成保存两三个常用尺寸。",
+    "建议之后做一次验收，本轮无需回复。",
+    "下一步我会自动检查，无需你操作。",
+    "系统会最优先发送未来30天的提醒。",
+    "下一张截图将自动发送。",
+    "请先做一次验收。后来我已代你完成，不需要你操作。",
+    "请先点击确认；刚刚已经完成，不需要你操作。",
+  ]) {
+    assert.deepEqual(classifyLastReply(reply), {
+      icon: "✅",
+      label: "本轮结束",
+    });
+  }
+
+  assert.deepEqual(classifyLastReply("请点击确认，本轮无需回复。"), {
+    icon: "🔁",
+    label: "需要你回复",
+  });
+});
+
+test("reply notification body prioritizes the concrete user action", () => {
+  const status = { icon: "🔁", label: "需要你回复" };
+  assert.equal(
+    notificationBodyFromAssistantReply(
+      "“不可用”已修复，现有校准已成功建立基线。最后请做一次来源验收。完成后回复“好了”。",
+      status,
+      "校准微信输入区",
+    ),
+    "完成后回复“好了”。",
+  );
+  assert.equal(
+    notificationBodyFromAssistantReply(
+      "当前金融负债已经整理。下一步先把这两组信息发给我，截图即可。拿到数据后我继续分析。",
+      status,
+      "整理个人负债",
+    ),
+    "下一步先把这两组信息发给我，截图即可。",
+  );
+  assert.equal(
+    notificationBodyFromAssistantReply(
+      "配置已完成，不需要你确认。",
+      { icon: "✅", label: "本轮结束" },
+      "更新配置",
+    ),
+    "配置已完成，不需要你确认。",
+  );
+  assert.equal(
+    notificationBodyFromAssistantReply(
+      "build 8 已运行，请重复最后一次双项验收。请照常输入，打错后使用退格也没关系。",
+      status,
+      "输入统计验收",
+    ),
+    "请重复最后一次双项验收。",
+  );
+  assert.equal(
+    notificationBodyFromAssistantReply(
+      "当前设置可继续。请回复“确认执行两项”，我将：",
+      status,
+      "更新设置",
+    ),
+    "请回复“确认执行两项”。",
+  );
+  assert.equal(
+    notificationBodyFromAssistantReply(
+      "现在请先按住 ⌘ 键，出现十字光标后拖框选中输入区，松开后回复我“框选好了”。如果遮罩已经消失，请点击重新框选。",
+      status,
+      "校准输入区",
+    ),
+    "现在请先按住 ⌘ 键，出现十字光标后拖框选中输入区，松开后回复我“框选好了”。",
+  );
+  assert.equal(
+    notificationBodyFromAssistantReply(
+      "有一个隐私变化需要你确认：需要保存当天的应用级汇总。你确认允许保存这些当天应用信息后，我就可以按这个方案实现。",
+      status,
+      "应用级统计",
+    ),
+    "你确认允许保存这些当天应用信息后，我就可以按这个方案实现。",
+  );
+  assert.equal(
+    notificationBodyFromAssistantReply(
+      "完成后回复“好了”，我会立即继续核验权限。",
+      status,
+      "权限核验",
+    ),
+    "完成后回复“好了”。",
+  );
+  assert.equal(
+    notificationBodyFromAssistantReply(
+      "你是否允许我点击官方微信的“进入微信”，做一次键盘和语音测试？",
+      status,
+      "测试微信输入",
+    ),
+    "你是否允许我点击官方微信的“进入微信”，做一次键盘和语音测试？",
+  );
+  assert.equal(
+    notificationBodyFromAssistantReply(
+      "松开后回复我“框选好了”，我继续检查权限。",
+      status,
+      "校准输入区",
+    ),
+    "松开后回复我“框选好了”。",
+  );
+  assert.equal(
+    notificationBodyFromAssistantReply(
+      "下一张优先发京东金条64,552元的还款计划。",
+      status,
+      "整理个人负债",
+    ),
+    "下一张优先发京东金条64,552元的还款计划。",
   );
 });
 
@@ -543,6 +682,38 @@ test("assistant summary removes hidden markers and avoids cutting a complete cla
       `${prefix}…`,
     );
   }
+});
+
+test("assistant summary preserves semantic versions and useful semicolon clauses", () => {
+  assert.equal(
+    shortenAssistantSummary(
+      "1.2.0 已安装，最后只差手动框选微信输入区。",
+      "安装输入统计",
+    ),
+    "1.2.0 已安装，最后只差手动框选微信输入区。",
+  );
+  assert.equal(
+    shortenAssistantSummary(
+      "1.2.2 已安装，微信键盘与语音失效检测已启用。",
+      "安装输入统计",
+    ),
+    "1.2.2 已安装，微信键盘与语音失效检测已启用。",
+  );
+  assert.equal(
+    shortenAssistantSummary(
+      "只需校准主微信；可移动，改大小会失效。",
+      "校准微信输入区",
+    ),
+    "只需校准主微信；可移动，改大小会失效。",
+  );
+  assert.equal(
+    shortenAssistantSummary("1. 第一项已经完成。", "处理任务"),
+    "第一项已经完成。",
+  );
+  assert.equal(
+    shortenAssistantSummary("1.第一项已经完成。", "处理任务"),
+    "第一项已经完成。",
+  );
 });
 
 test("assistant summary redacts credentials and falls back from unsafe text", () => {

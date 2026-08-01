@@ -99,7 +99,11 @@ test("subagent and unknown turns are suppressed without jobs", async (t) => {
     assert.equal(result.outcome, expected);
     assert.equal(spawned, false);
     await assert.rejects(readdir(paths.jobsDirectory), { code: "ENOENT" });
-    assert.equal((await auditEvents(paths))[0].event, expected);
+    const [audit] = await auditEvents(paths);
+    assert.equal(audit.event, expected);
+    if (kind === "unknown") {
+      assert.equal(audit.retries, 4);
+    }
   }
 });
 
@@ -198,7 +202,7 @@ test("reference-only jobs preserve reply and error notification states", async (
       "direct-feedback-turn",
       "三版提示音已生成。\n你听完告诉我选 A、B 还是 C。",
       "🔁 [example]需要你回复",
-      "三版提示音已生成。",
+      "你听完告诉我选 A、B 还是 C。",
     ],
     ["error-turn", "系统错误，任务中断。", "⛔ [example]受阻或出错"],
   ]) {

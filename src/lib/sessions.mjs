@@ -3,13 +3,20 @@ import { basename, join } from "node:path";
 
 import {
   normalizeTaskName,
+  notificationBodyFromAssistantReply,
   parseJson,
   payloadIds,
-  shortenAssistantSummary,
   shortenConversationName,
   textFromAssistantMessage,
   textFromUserMessage,
 } from "./text.mjs";
+
+export const THREAD_KIND_RETRY_DELAYS = Object.freeze([
+  500,
+  1_000,
+  2_000,
+  4_000,
+]);
 
 export function classifySessionMetaPayload(metaPayload, threadId = "") {
   if (!metaPayload || (threadId && metaPayload.id !== threadId)) {
@@ -97,7 +104,7 @@ export async function resolvedThreadKind(
   payload,
   paths,
   {
-    retryDelays = [500, 1_000, 1_500],
+    retryDelays = THREAD_KIND_RETRY_DELAYS,
     sleep = (milliseconds) =>
       new Promise((resolve) => setTimeout(resolve, milliseconds)),
   } = {},
@@ -226,11 +233,16 @@ export async function assistantSummaryFromTranscript(
   fallback = "未生成摘要",
   {
     retryDelays = [150, 300],
+    status,
     sleep = (milliseconds) =>
       new Promise((resolve) => setTimeout(resolve, milliseconds)),
   } = {},
 ) {
-  const safeFallback = shortenAssistantSummary("", fallback);
+  const safeFallback = notificationBodyFromAssistantReply(
+    "",
+    status,
+    fallback,
+  );
   if (!transcriptPath || !turnId) {
     return safeFallback;
   }
@@ -255,7 +267,7 @@ export async function assistantSummaryFromTranscript(
         }
         const text = textFromAssistantMessage(record);
         return text.trim()
-          ? shortenAssistantSummary(text, fallback)
+          ? notificationBodyFromAssistantReply(text, status, fallback)
           : safeFallback;
       }
     } catch {
