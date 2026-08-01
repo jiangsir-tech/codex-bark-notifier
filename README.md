@@ -67,8 +67,6 @@
 >
 > 打开 Mac 上的 Codex Desktop，新建一个本地任务，把下面整段复制过去，只替换最后一行：
 
-Device Key 不是 Apple ID 或 ChatGPT 密码，但别人拿到后可以给你的 Bark 发通知。把 Key 发给 Codex 后，它会留在这次对话和可能的工具记录里，所以不要把它放进公开仓库、Issue 或截图。
-
 ```text
 请直接在我的 Mac 上安装并验证这个项目，不要只告诉我怎么操作：
 https://github.com/jiangsir-tech/codex-bark-notifier
@@ -89,6 +87,8 @@ Device Key 可以用于这次安装，但不要在回复、日志或命令中重
 ```
 
 后面如果 Codex 让你确认测试通知，或者让你检查 Hook，照着提示操作就行，其他步骤都交给 Codex。
+
+Device Key 不是 Apple ID 或 ChatGPT 密码，但别人拿到后可以给你的 Bark 发通知。把 Key 发给 Codex 后，它会留在这次对话和可能的工具记录里，所以不要把它放进公开仓库、Issue 或截图。
 
 更完整的安装检查和安全边界在[安装指南](docs/INSTALL_WITH_CODEX.md)和[安全说明](SECURITY.md)里。
 
