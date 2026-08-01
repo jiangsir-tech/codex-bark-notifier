@@ -85,3 +85,43 @@ Device Key 可以用于这次安装，但不要在回复、日志或命令中重
 后面如果 Codex 让你确认测试通知，或者让你检查 Hook，照着提示操作就行，其他步骤都交给 Codex。
 
 更完整的安装检查和安全边界在[安装指南](docs/INSTALL_WITH_CODEX.md)和[安全说明](SECURITY.md)里。
+
+## 5. 复制给 Codex 更新
+
+以后要更新时，在 Mac 上新建一个 Codex 本地任务，复制下面整段即可，不需要再次提供 Device Key：
+
+```text
+请直接在我的 Mac 上把已经安装的 Codex Bark Notifier 更新到最新版本，不要只告诉我怎么操作：
+https://github.com/jiangsir-tech/codex-bark-notifier
+
+请先阅读仓库最新的 README、安装指南、CHANGELOG 和安装器帮助，然后直接执行：
+
+1. 确认当前是能操作这台 Mac 的本地任务，并检查实际生效的 CODEX_HOME、现有安装清单、notify、Hooks 和公开配置。
+2. 在新的临时目录获取 main 分支最新源码，不要覆盖已有源码目录或里面未提交的改动。发现来源不明的改动或配置冲突时，安全停止并告诉我。
+3. 复用本机已经保存的 Bark Device Key，不要让我重新提供，也不要读取、搜索、哈希、输出或转述它；如果 Key 缺失就停止并告诉我。
+4. 使用同一个 CODEX_HOME，先运行 sh scripts/install.sh --verify，再运行 sh scripts/install.sh --dry-run。任何测试或预演失败都要停止，不修改现有安装。
+5. 预检通过后运行 sh scripts/install.sh 完成更新。保留我的自定义 config.json、原有 notify、其他 Hooks 和备份。
+6. 更新后核对安装清单、文件权限和四种通知。最多运行一次 sh scripts/install.sh --send-test，然后让我确认 iPhone 是否实际收到；不能只凭请求成功判断手机已经收到。
+7. 检查 PermissionRequest Hook 是否仍然可信；只有 /hooks 显示它是新增、已变化或未信任时，才引导我核对后亲自信任。不得自动信任、伪造信任状态或绕过 Hook trust。
+
+最后告诉我更新到的 commit SHA、测试数量、保留了哪些设置，以及是否需要重启 Codex Desktop。不要修改无关项目，也不要提交或推送仓库。
+```
+
+## 6. 复制给 Codex 卸载
+
+下面默认使用可恢复卸载：停止通知并恢复 Codex 配置，但保留 Device Key、公开配置、日志和备份，避免误删。
+
+```text
+请直接在我的 Mac 上安全卸载 Codex Bark Notifier，不要只告诉我怎么操作：
+https://github.com/jiangsir-tech/codex-bark-notifier
+
+请先阅读仓库最新的 README、安装指南、SECURITY、卸载器帮助，然后直接执行：
+
+1. 确认当前是能操作这台 Mac 的本地任务，在新的临时目录获取 main 分支最新源码，并检查实际生效的 CODEX_HOME 和安装清单。不要覆盖已有源码目录或里面未提交的改动。
+2. 不要读取、搜索、哈希、输出或转述 Bark Device Key。先运行 sh scripts/install.sh --verify，再运行 sh scripts/install.sh --uninstall --dry-run。
+3. 如果预演确认能够安全恢复安装前的 notify 和 Hooks，就运行 sh scripts/install.sh --uninstall；如果配置已经被改动、无法安全恢复，就停止并告诉我，不要强行覆盖。
+4. 不要使用 --purge。卸载后确认安装清单标记为已卸载，临时 state 和 jobs 已清理；只移除本项目管理的 notify、PermissionRequest Hook 和未被修改的受管运行文件，保护本地修改过的文件。
+5. 确认原有 notify、其他 Hooks 和后来增加的用户配置没有被误删。告诉我删除了什么，保留了哪些 Device Key、公开配置、日志、卸载清单和备份，以及是否需要重启 Codex Desktop。不要发送测试通知，也不要修改无关项目或推送仓库。
+
+只有我之后明确要求“彻底删除所有保留数据”时，才能先说明 --purge 不可恢复的删除范围和可能留下悬空 Codex 配置的情况，再执行 --purge。本轮不得使用它。
+```
