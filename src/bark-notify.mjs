@@ -25,6 +25,7 @@ import {
   releaseEventLock,
   removeIfPresent,
   safeErrorReason,
+  PRIVATE_JOB_SCHEMA_VERSION,
   writeAudit,
 } from "./lib/state.mjs";
 import {
@@ -127,23 +128,22 @@ async function buildReferencedNotification(job, status, paths) {
     job.notification_thread_id,
     paths.sessionRoot,
   );
-  const [taskName, conversationName] = await Promise.all([
-    taskNameFromIndex(
-      job.notification_thread_id,
-      paths.sessionIndex,
-      job.cwd_name,
-    ),
-    conversationNameFromTranscript(transcriptPath, job.cwd_name),
-  ]);
+  const taskName = await taskNameFromIndex(
+    job.notification_thread_id,
+    paths.sessionIndex,
+    job.cwd_name,
+  );
+  const requestName =
+    job.request_name || conversationNameFromPayload({ cwd: job.cwd_name });
   const bodyText =
     job.kind === "turn"
       ? await assistantSummaryFromTranscript(
           transcriptPath,
           job.turn_id,
-          conversationName,
+          requestName,
           { status },
         )
-      : conversationName;
+      : requestName;
   return withCodexRemoteUrl(
     formatNotification(status, taskName, bodyText),
     job.notification_thread_id,
@@ -214,14 +214,19 @@ export async function schedulePermissionNotification(
   try {
     const { threadId, turnId } = payloadIds(hookInput);
     const context = await notificationContext(hookInput, paths);
+    const requestName = await conversationNameFromTranscript(
+      context.notificationTranscript,
+      hookInput?.cwd,
+    );
     jobPath = await createPrivateJob(
       {
-        schema_version: 1,
+        schema_version: PRIVATE_JOB_SCHEMA_VERSION,
         kind: "permission",
         thread_id: threadId,
         turn_id: turnId,
         notification_thread_id: context.notificationThreadId,
         cwd_name: basename(hookInput?.cwd || ""),
+        request_name: requestName,
       },
       paths,
     );
@@ -333,12 +338,13 @@ export async function scheduleTurnNotification(
     const { threadId, turnId } = payloadIds(payload);
     jobPath = await createPrivateJob(
       {
-        schema_version: 1,
+        schema_version: PRIVATE_JOB_SCHEMA_VERSION,
         kind: "turn",
         thread_id: threadId,
         turn_id: turnId,
         notification_thread_id: threadId,
         cwd_name: basename(payload?.cwd || ""),
+        request_name: conversationNameFromPayload(payload),
         status: turnStatusCode(payload?.["last-assistant-message"]),
         delay_ms: delayMilliseconds,
       },

@@ -31,6 +31,7 @@ export function runtimePaths(entryUrl = import.meta.url, environment = process.e
 
 export const DEFAULT_RUNTIME_CONFIG = Object.freeze({
   barkEndpoint: "https://api.day.app/push",
+  allowInsecureLoopback: false,
   barkIconUrl: DEFAULT_ICON_URL,
   group: "Codex",
   sound: "minuet",

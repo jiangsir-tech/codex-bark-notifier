@@ -47,9 +47,26 @@ export class UnsafePathError extends Error {
   }
 }
 
+export class ConcurrentConfigurationError extends Error {
+  constructor(message, options = {}) {
+    super(message, options);
+    this.name = "ConcurrentConfigurationError";
+    this.code = "CODEX_BARK_CONCURRENT_CONFIGURATION";
+  }
+}
+
+export class LifecycleBusyError extends Error {
+  constructor(message, options = {}) {
+    super(message, options);
+    this.name = "LifecycleBusyError";
+    this.code = "CODEX_BARK_LIFECYCLE_BUSY";
+  }
+}
+
 export const RUNTIME_CONFIG = Object.freeze({
   bark: Object.freeze({
     endpoint: "https://api.day.app/push",
+    allowInsecureLoopback: false,
     icon:
       "https://raw.githubusercontent.com/jiangsir-tech/codex-bark-icon/c188b28641901dbc8b3497bf9d8a8222243ef811/codex-bark-icon.png",
     group: "Codex",
@@ -139,6 +156,7 @@ export function installationPaths({
     jobs: join(installRoot, "jobs"),
     configToml: join(codexHome, "config.toml"),
     hooksJson: join(codexHome, "hooks.json"),
+    lifecycleLock: join(codexHome, `.${PRODUCT}.lifecycle.lock`),
     backupRoot: join(codexHome, "backups", PRODUCT),
   };
 }
@@ -1422,6 +1440,559 @@ export async function atomicWrite(path, content, mode = 0o600) {
   } finally {
     await rm(temporary, { force: true }).catch(() => {});
   }
+}
+
+function textFileState(exists, content = "") {
+  return {
+    exists,
+    content: exists ? content : "",
+    digest: sha256(exists ? content : "<missing>"),
+  };
+}
+
+export async function captureTextFileState(path) {
+  const metadata = await assertNotSymlink(path, { requireFile: true });
+  if (!metadata) {
+    return textFileState(false);
+  }
+  return textFileState(true, await readFile(path, "utf8"));
+}
+
+export function expectedTextFileState(content, exists = true) {
+  return textFileState(exists, content);
+}
+
+export async function assertTextFileUnchanged(path, expected, label) {
+  const current = await captureTextFileState(path);
+  if (
+    current.exists !== expected?.exists ||
+    current.digest !== expected?.digest
+  ) {
+    throw new ConcurrentConfigurationError(
+      `${label} changed concurrently; refusing to overwrite it.`,
+    );
+  }
+  return current;
+}
+
+export async function rollbackTextFileMutation(
+  path,
+  before,
+  after,
+  { mode = 0o600, writeAtomic = atomicWrite } = {},
+) {
+  const current = await captureTextFileState(path);
+  if (
+    current.exists === before.exists &&
+    current.digest === before.digest
+  ) {
+    return "unchanged";
+  }
+  if (
+    current.exists !== after.exists ||
+    current.digest !== after.digest
+  ) {
+    return "concurrent";
+  }
+  if (before.exists) {
+    await writeAtomic(path, before.content, mode);
+  } else {
+    await rm(path, { force: true });
+  }
+  return "restored";
+}
+
+function lifecycleLockPaths(paths) {
+  const expected = join(
+    resolve(paths.codexHome),
+    `.${PRODUCT}.lifecycle.lock`,
+  );
+  if (resolve(paths.lifecycleLock) !== expected) {
+    throw new UnsafePathError(
+      "Refusing lifecycle operation because the lock path is unexpected.",
+    );
+  }
+  return {
+    root: expected,
+    owner: join(expected, "owner.json"),
+  };
+}
+
+function processIsAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code !== "ESRCH";
+  }
+}
+
+async function inspectLifecycleLock(lockPaths, staleAfterMilliseconds) {
+  const checkedRootMetadata = await assertNotSymlink(lockPaths.root, {
+    requireDirectory: true,
+  });
+  if (!checkedRootMetadata) {
+    return { missing: true, active: false, owner: null, identity: null };
+  }
+  let metadata;
+  try {
+    metadata = await lstat(lockPaths.root, { bigint: true });
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return { missing: true, active: false, owner: null, identity: null };
+    }
+    throw error;
+  }
+  if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
+    throw new UnsafePathError(
+      `Expected a non-symbolic-link directory: ${lockPaths.root}`,
+    );
+  }
+  let owner = null;
+  let ownerSource = "<missing>";
+  let ownerIdentity = {
+    exists: false,
+    device: "",
+    inode: "",
+    digest: sha256(ownerSource),
+  };
+  const ownerMetadata = await assertNotSymlink(lockPaths.owner, {
+    requireFile: true,
+  });
+  if (ownerMetadata) {
+    try {
+      const exactOwnerMetadata = await lstat(lockPaths.owner, {
+        bigint: true,
+      });
+      if (exactOwnerMetadata.isSymbolicLink() || !exactOwnerMetadata.isFile()) {
+        throw new UnsafePathError(
+          `Expected a non-symbolic-link regular file: ${lockPaths.owner}`,
+        );
+      }
+      ownerSource = await readFile(lockPaths.owner, "utf8");
+      ownerIdentity = {
+        exists: true,
+        device: exactOwnerMetadata.dev.toString(),
+        inode: exactOwnerMetadata.ino.toString(),
+        digest: sha256(ownerSource),
+      };
+      owner = JSON.parse(ownerSource);
+    } catch (error) {
+      if (error instanceof UnsafePathError) {
+        throw error;
+      }
+      if (error?.code === "ENOENT") {
+        ownerSource = "<missing>";
+      } else {
+        ownerIdentity = {
+          ...ownerIdentity,
+          digest: sha256(ownerSource),
+        };
+        owner = null;
+      }
+    }
+  }
+  const identity = {
+    device: metadata.dev.toString(),
+    inode: metadata.ino.toString(),
+    owner: ownerIdentity,
+  };
+  if (
+    Number.isInteger(owner?.pid) &&
+    owner.pid > 0 &&
+    processIsAlive(owner.pid)
+  ) {
+    return { missing: false, active: true, owner, identity };
+  }
+  if (
+    !owner &&
+    Date.now() - Number(metadata.mtimeMs) <= staleAfterMilliseconds
+  ) {
+    return { missing: false, active: true, owner: null, identity };
+  }
+  return { missing: false, active: false, owner, identity };
+}
+
+function sameLifecycleLockIdentity(left, right) {
+  return Boolean(
+    left &&
+      right &&
+      left.device === right.device &&
+      left.inode === right.inode &&
+      left.owner?.exists === right.owner?.exists &&
+      left.owner?.device === right.owner?.device &&
+      left.owner?.inode === right.owner?.inode &&
+      left.owner?.digest === right.owner?.digest,
+  );
+}
+
+function sameLifecycleClaimIdentity(left, right) {
+  return Boolean(
+    left &&
+      right &&
+      left.device === right.device &&
+      left.inode === right.inode &&
+      left.digest === right.digest,
+  );
+}
+
+async function inspectLifecycleClaim(claimPath, staleAfterMilliseconds) {
+  const checkedMetadata = await assertNotSymlink(claimPath, {
+    requireFile: true,
+  });
+  if (!checkedMetadata) {
+    return { missing: true, active: false, claim: null, identity: null };
+  }
+
+  let metadata;
+  let source;
+  try {
+    metadata = await lstat(claimPath, { bigint: true });
+    if (metadata.isSymbolicLink() || !metadata.isFile()) {
+      throw new UnsafePathError(
+        `Expected a non-symbolic-link regular file: ${claimPath}`,
+      );
+    }
+    source = await readFile(claimPath, "utf8");
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return { missing: true, active: false, claim: null, identity: null };
+    }
+    throw error;
+  }
+
+  let claim = null;
+  try {
+    claim = JSON.parse(source);
+  } catch {
+    claim = null;
+  }
+  const identity = {
+    device: metadata.dev.toString(),
+    inode: metadata.ino.toString(),
+    digest: sha256(source),
+  };
+  const startedAt = Date.parse(String(claim?.startedAt ?? ""));
+  const ageReference = Number.isFinite(startedAt)
+    ? startedAt
+    : Number(metadata.mtimeMs);
+  const recentlyCreated =
+    Date.now() - ageReference <= staleAfterMilliseconds;
+  const liveOwner = Boolean(
+    claim?.product === PRODUCT &&
+      Number.isInteger(claim?.pid) &&
+      claim.pid > 0 &&
+      processIsAlive(claim.pid),
+  );
+  return {
+    missing: false,
+    active: liveOwner || recentlyCreated,
+    claim,
+    identity,
+  };
+}
+
+async function retireStaleLifecycleClaim(
+  claimPath,
+  staleAfterMilliseconds,
+) {
+  const state = await inspectLifecycleClaim(
+    claimPath,
+    staleAfterMilliseconds,
+  );
+  if (state.missing) {
+    return false;
+  }
+  if (state.active) {
+    throw new LifecycleBusyError(
+      "Another Codex Bark lifecycle recovery is already running.",
+    );
+  }
+
+  const retiredPath = `${claimPath}.stale-${randomUUID()}`;
+  try {
+    await rename(claimPath, retiredPath);
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+
+  const movedState = await inspectLifecycleClaim(
+    retiredPath,
+    staleAfterMilliseconds,
+  );
+  if (
+    movedState.missing ||
+    movedState.active ||
+    !sameLifecycleClaimIdentity(state.identity, movedState.identity)
+  ) {
+    if (!(await pathExists(claimPath))) {
+      await rename(retiredPath, claimPath).catch(() => {});
+    }
+    if (movedState.active) {
+      throw new LifecycleBusyError(
+        "Another Codex Bark lifecycle recovery is already running.",
+      );
+    }
+    throw new UnsafePathError(
+      "Lifecycle recovery claim identity changed; refusing to delete it.",
+    );
+  }
+
+  await rm(retiredPath, { force: true });
+  return true;
+}
+
+async function readLifecycleClaim(claimPath) {
+  const metadata = await assertNotSymlink(claimPath, {
+    requireFile: true,
+  });
+  if (!metadata) {
+    return null;
+  }
+  return JSON.parse(await readFile(claimPath, "utf8"));
+}
+
+async function removeLifecycleClaimIfOwned(claimPath, token) {
+  try {
+    const metadata = await assertNotSymlink(claimPath, {
+      requireFile: true,
+    });
+    if (!metadata) {
+      return false;
+    }
+    const claim = await readLifecycleClaim(claimPath);
+    if (claim?.token !== token) {
+      return false;
+    }
+    await rm(claimPath, { force: true });
+    return true;
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+}
+
+export async function acquireLifecycleLock(
+  paths,
+  { staleAfterMilliseconds = 10 * 60 * 1_000 } = {},
+) {
+  const lockPaths = lifecycleLockPaths(paths);
+  await mkdir(dirname(lockPaths.root), { recursive: true, mode: 0o700 });
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    try {
+      await mkdir(lockPaths.root, { mode: 0o700 });
+      await chmod(lockPaths.root, 0o700);
+      const token = randomUUID();
+      const owner = {
+        product: PRODUCT,
+        pid: process.pid,
+        token,
+        startedAt: new Date().toISOString(),
+      };
+      try {
+        await writeFile(
+          lockPaths.owner,
+          `${JSON.stringify(owner)}\n`,
+          { flag: "wx", mode: 0o600 },
+        );
+      } catch (error) {
+        await rm(lockPaths.root, { recursive: true, force: true }).catch(() => {});
+        throw error;
+      }
+      return { ...lockPaths, token };
+    } catch (error) {
+      if (error?.code !== "EEXIST") {
+        throw error;
+      }
+    }
+
+    const state = await inspectLifecycleLock(
+      lockPaths,
+      staleAfterMilliseconds,
+    );
+    if (state.missing) {
+      continue;
+    }
+    if (state.active) {
+      throw new LifecycleBusyError(
+        "Another Codex Bark lifecycle operation is already running.",
+      );
+    }
+    const recoveryToken = randomUUID();
+    const claimPath = join(lockPaths.root, ".reclaim.json");
+    const stalePath = `${lockPaths.root}.stale-${recoveryToken}`;
+    const claimSource = `${JSON.stringify({
+      product: PRODUCT,
+      pid: process.pid,
+      token: recoveryToken,
+      startedAt: new Date().toISOString(),
+    })}\n`;
+    try {
+      try {
+        await writeFile(claimPath, claimSource, {
+          flag: "wx",
+          mode: 0o600,
+        });
+      } catch (error) {
+        if (error?.code !== "EEXIST") {
+          throw error;
+        }
+        const retired = await retireStaleLifecycleClaim(
+          claimPath,
+          staleAfterMilliseconds,
+        );
+        if (!retired) {
+          continue;
+        }
+        try {
+          await writeFile(claimPath, claimSource, {
+            flag: "wx",
+            mode: 0o600,
+          });
+        } catch (retryError) {
+          if (retryError?.code === "EEXIST") {
+            throw new LifecycleBusyError(
+              "Another Codex Bark lifecycle recovery is already running.",
+              { cause: retryError },
+            );
+          }
+          throw retryError;
+        }
+      }
+      const claimedState = await inspectLifecycleLock(
+        lockPaths,
+        staleAfterMilliseconds,
+      );
+      const claim = await readLifecycleClaim(claimPath);
+      const identityUnchanged = sameLifecycleLockIdentity(
+        state.identity,
+        claimedState.identity,
+      );
+      const ownerlessClaimUpdatedMtime = Boolean(
+        identityUnchanged &&
+          state.identity?.owner?.exists === false &&
+          claimedState.identity?.owner?.exists === false,
+      );
+      if (
+        claimedState.missing ||
+        (claimedState.active && !ownerlessClaimUpdatedMtime) ||
+        claim?.token !== recoveryToken ||
+        !identityUnchanged
+      ) {
+        await removeLifecycleClaimIfOwned(claimPath, recoveryToken);
+        if (claimedState.active && !ownerlessClaimUpdatedMtime) {
+          throw new LifecycleBusyError(
+            "Another Codex Bark lifecycle operation is already running.",
+          );
+        }
+        continue;
+      }
+      await rename(lockPaths.root, stalePath);
+      const movedLockPaths = {
+        root: stalePath,
+        owner: join(stalePath, "owner.json"),
+      };
+      const movedState = await inspectLifecycleLock(
+        movedLockPaths,
+        staleAfterMilliseconds,
+      );
+      const movedClaim = await readLifecycleClaim(
+        join(stalePath, ".reclaim.json"),
+      );
+      const movedIdentityUnchanged = sameLifecycleLockIdentity(
+        state.identity,
+        movedState.identity,
+      );
+      const movedOwnerlessClaimUpdatedMtime = Boolean(
+        movedIdentityUnchanged &&
+          state.identity?.owner?.exists === false &&
+          movedState.identity?.owner?.exists === false,
+      );
+      if (
+        movedState.missing ||
+        (movedState.active && !movedOwnerlessClaimUpdatedMtime) ||
+        movedClaim?.token !== recoveryToken ||
+        !movedIdentityUnchanged
+      ) {
+        if (!(await pathExists(lockPaths.root))) {
+          await rename(stalePath, lockPaths.root).catch(() => {});
+        }
+        throw new UnsafePathError(
+          "Lifecycle lock identity changed during stale-lock recovery; refusing to delete it.",
+        );
+      }
+      await rm(stalePath, { recursive: true, force: true });
+    } catch (error) {
+      await removeLifecycleClaimIfOwned(claimPath, recoveryToken).catch(
+        () => false,
+      );
+      if (error instanceof LifecycleBusyError) {
+        throw error;
+      }
+      if (error?.code === "EEXIST") {
+        const currentState = await inspectLifecycleLock(
+          lockPaths,
+          staleAfterMilliseconds,
+        );
+        if (currentState.missing) {
+          continue;
+        }
+        throw new LifecycleBusyError(
+          "Another Codex Bark lifecycle operation is already running.",
+          { cause: error },
+        );
+      }
+      if (error?.code !== "ENOENT") {
+        throw error;
+      }
+    }
+  }
+  throw new LifecycleBusyError(
+    "Another Codex Bark lifecycle operation is already running.",
+  );
+}
+
+export async function releaseLifecycleLock(lock) {
+  if (!lock?.root || !lock?.owner || !lock?.token) {
+    return false;
+  }
+  let owner;
+  try {
+    const rootMetadata = await assertNotSymlink(lock.root, {
+      requireDirectory: true,
+    });
+    if (!rootMetadata) {
+      return false;
+    }
+    const ownerMetadata = await assertNotSymlink(lock.owner, {
+      requireFile: true,
+    });
+    if (!ownerMetadata) {
+      return false;
+    }
+    owner = JSON.parse(await readFile(lock.owner, "utf8"));
+  } catch {
+    return false;
+  }
+  if (owner?.token !== lock.token) {
+    return false;
+  }
+  const releasedPath = `${lock.root}.released-${lock.token}`;
+  try {
+    await rename(lock.root, releasedPath);
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+  await rm(releasedPath, { recursive: true, force: true });
+  return true;
 }
 
 export function timestamp(date = new Date()) {

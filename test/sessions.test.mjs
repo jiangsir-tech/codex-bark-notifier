@@ -215,6 +215,45 @@ test("PermissionRequest keeps absolute paths and bidi controls out of the final 
   assert.equal(/\p{Bidi_Control}/u.test(JSON.stringify(notification)), false);
 });
 
+test("PermissionRequest redacts Bark keys and uses a safe credential-only fallback", async (t) => {
+  const paths = await temporaryPaths();
+  t.after(() => removeTemporaryPaths(paths));
+  const threadId = "credential-thread";
+  const transcript = join(
+    paths.sessionRoot,
+    `rollout-main-${threadId}.jsonl`,
+  );
+  await writeFile(
+    transcript,
+    jsonl(
+      { type: "session_meta", payload: { id: threadId } },
+      {
+        type: "event_msg",
+        payload: {
+          type: "user_message",
+          message: "我的 Bark Device Key 是 testKey123456",
+        },
+      },
+    ),
+  );
+
+  const notification = await buildPermissionNotification(
+    {
+      session_id: threadId,
+      transcript_path: transcript,
+      cwd: "/tmp/配置通知",
+    },
+    paths,
+  );
+
+  assert.deepEqual(notification, {
+    title: "🔐 [配置通知]需要你批准",
+    body: "💬配置通知",
+    url: "https://chatgpt.com/codex/tasks/credential-thread",
+  });
+  assert.doesNotMatch(JSON.stringify(notification), /testKey/u);
+});
+
 test("task index uses latest matching name and strips brackets", async (t) => {
   const paths = await temporaryPaths();
   t.after(() => removeTemporaryPaths(paths));

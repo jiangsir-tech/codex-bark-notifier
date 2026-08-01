@@ -19,6 +19,30 @@ const HIGH_SIGNAL_LOCAL_PATH_PATTERNS = [
 ];
 const DELIMITED_POSIX_PATH_PATTERN =
   /(?:^|[^\p{L}\p{N}_/.])\/+(?=[^\s/])/u;
+const LEGACY_CREDENTIAL_PATTERN =
+  /((?:api[-_ ]?key|device[-_ ]?key|access[-_ ]?token|authorization|bearer|token|secret|password|passcode|密钥|密匙|令牌|密码|验证码)\s*[:=：]\s*)([^\s,，;；]+)/giu;
+const BARK_DEVICE_KEY_LABEL_SOURCE =
+  "(?:bark\\s*(?:(?:的|里(?:面)?的?)\\s*)?(?:device[-_ ]?key|key|密钥|密匙)|device[-_ ]?key|设备(?:密钥|密匙))";
+const NATURAL_CREDENTIAL_SEPARATOR_SOURCE =
+  "(?:[:=：]|(?:就)?是\\s*[:=：]?|为\\s*[:=：]?)";
+const BARK_DEVICE_KEY_PATTERN = new RegExp(
+  `(${BARK_DEVICE_KEY_LABEL_SOURCE}\\s*${NATURAL_CREDENTIAL_SEPARATOR_SOURCE}\\s*)(\\S+)`,
+  "giu",
+);
+const BARK_DEVICE_KEY_ONLY_PATTERN = new RegExp(
+  `^\\s*(?:(?:我的|当前的|本机的|这个)\\s*)?${BARK_DEVICE_KEY_LABEL_SOURCE}\\s*${NATURAL_CREDENTIAL_SEPARATOR_SOURCE}\\s*(\\S+)\\s*$`,
+  "iu",
+);
+const BARK_DEVICE_KEY_QUESTION_VALUE_PATTERN =
+  /^(?:什么|多少|哪个|哪一个|哪种|如何|怎么)(?:[，,。.!！?？]|$)/u;
+const LEGACY_CREDENTIAL_ONLY_PATTERN =
+  /^\s*(?:api[-_ ]?key|device[-_ ]?key|access[-_ ]?token|authorization|bearer|token|secret|password|passcode|密钥|密匙|令牌|密码|验证码)\s*[:=：]\s*[^\s,，;；]+\s*[。.!！]?\s*$/iu;
+const STANDALONE_CREDENTIAL_PATTERN =
+  /^\s*[A-Za-z0-9_-]{28,}\s*[。.!！]?\s*$/u;
+const SHORT_STANDALONE_BARK_KEY_PATTERN =
+  /^(?=\S{8,27}$)(?=\S*[A-Za-z])(?=\S*\d)\S+$/u;
+const PUNCTUATED_STANDALONE_BARK_KEY_PATTERN =
+  /^(?=\S{8,256}$)(?=\S*[A-Za-z])(?=\S*\d)(?=\S*[._+\/-])\S+$/u;
 
 function stripBidiControls(value) {
   return String(value ?? "").replace(BIDI_CONTROL_PATTERN, "");
@@ -210,7 +234,15 @@ export function shortenConversationName(rawText, cwd = "") {
     lines.find((line) => /[\p{Script=Han}A-Za-z0-9]/u.test(line)) ??
     fallback;
 
-  candidate = candidate
+  if (isCredentialOnlyNotificationText(candidate)) {
+    return truncateText(
+      fallback,
+      CONVERSATION_NAME_CHARACTER_LIMIT,
+      "未命名对话",
+    );
+  }
+
+  candidate = redactSensitiveSummaryValues(candidate)
     .replace(/^[-*#>\d.、)\s]+/u, "")
     .replace(/^(?:(?:请你?|麻烦你?|你帮我|帮我|我想要)\s*)+/u, "")
     .split(/[。！？?!：:]/u)[0]
@@ -229,13 +261,40 @@ export function shortenConversationName(rawText, cwd = "") {
   );
 }
 
+function isProbableLabeledBarkKey(value) {
+  const candidate = String(value ?? "").trim();
+  return (
+    candidate.length >= 8 &&
+    !BARK_DEVICE_KEY_QUESTION_VALUE_PATTERN.test(candidate)
+  );
+}
+
+function redactBarkDeviceKeyAssignments(value) {
+  return String(value ?? "").replace(
+    BARK_DEVICE_KEY_PATTERN,
+    (match, prefix, candidate) =>
+      isProbableLabeledBarkKey(candidate)
+        ? `${prefix}[已隐藏]`
+        : match,
+  );
+}
+
 function redactSensitiveSummaryValues(value) {
-  return String(value ?? "")
-    .replace(
-      /((?:api[-_ ]?key|device[-_ ]?key|access[-_ ]?token|authorization|bearer|token|secret|password|passcode|密钥|令牌|密码|验证码)\s*[:=：]\s*)([^\s,，;；]+)/giu,
-      "$1[已隐藏]",
-    )
+  return redactBarkDeviceKeyAssignments(value)
+    .replace(LEGACY_CREDENTIAL_PATTERN, "$1[已隐藏]")
     .replace(/\b[A-Za-z0-9_-]{28,}\b/gu, "[已隐藏]");
+}
+
+function isCredentialOnlyNotificationText(value) {
+  const candidate = stripBidiControls(value);
+  const labeledBarkKey = BARK_DEVICE_KEY_ONLY_PATTERN.exec(candidate);
+  return (
+    (labeledBarkKey && isProbableLabeledBarkKey(labeledBarkKey[1])) ||
+    LEGACY_CREDENTIAL_ONLY_PATTERN.test(candidate) ||
+    STANDALONE_CREDENTIAL_PATTERN.test(candidate) ||
+    SHORT_STANDALONE_BARK_KEY_PATTERN.test(candidate.trim()) ||
+    PUNCTUATED_STANDALONE_BARK_KEY_PATTERN.test(candidate.trim())
+  );
 }
 
 const GENERIC_SUMMARY_PATTERN =
@@ -858,12 +917,22 @@ export function completionDelayMilliseconds(payload) {
 
 export function formatNotification(status, taskName, bodyText) {
   const safeTaskName = truncateText(
-    sanitizeNotificationText(taskName, "未命名任务"),
+    sanitizeNotificationText(
+      isCredentialOnlyNotificationText(taskName)
+        ? "未命名任务"
+        : redactSensitiveSummaryValues(taskName),
+      "未命名任务",
+    ),
     TASK_NAME_CHARACTER_LIMIT,
     "未命名任务",
   );
   const safeBodyText = truncateText(
-    sanitizeNotificationText(bodyText, "未生成摘要"),
+    sanitizeNotificationText(
+      isCredentialOnlyNotificationText(bodyText)
+        ? "未生成摘要"
+        : redactSensitiveSummaryValues(bodyText),
+      "未生成摘要",
+    ),
     ANSWER_SUMMARY_CHARACTER_LIMIT,
     "未生成摘要",
   );

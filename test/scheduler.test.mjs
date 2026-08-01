@@ -63,15 +63,16 @@ test("main turn schedules one detached private job", async (t) => {
   const rawJob = await readFile(`${paths.jobsDirectory}/${jobName}`, "utf8");
   assert.doesNotMatch(
     rawJob,
-    /整理通知程序测试|TURN_TOOL_SECRET|TURN_EXTRA_SECRET|TURN_ASSISTANT_SECRET/u,
+    /TURN_TOOL_SECRET|TURN_EXTRA_SECRET|TURN_ASSISTANT_SECRET/u,
   );
   assert.deepEqual(JSON.parse(rawJob), {
-    schema_version: 1,
+    schema_version: 2,
     kind: "turn",
     thread_id: "main-thread",
     turn_id: "turn-1",
     notification_thread_id: "main-thread",
     cwd_name: "example",
+    request_name: "整理通知程序测试",
     status: "complete",
     delay_ms: 5_000,
   });
@@ -259,6 +260,94 @@ test("reference-only jobs preserve reply and error notification states", async (
   }
 });
 
+test("missing or empty target completion never falls back to a later user message", async (t) => {
+  for (const [turnId, targetRecord] of [
+    ["missing-turn", null],
+    [
+      "empty-turn",
+      {
+        type: "event_msg",
+        payload: { type: "task_complete", turn_id: "empty-turn" },
+      },
+    ],
+  ]) {
+    const paths = await temporaryPaths();
+    t.after(() => removeTemporaryPaths(paths));
+    let jobPath = "";
+    await scheduleTurnNotification(
+      {
+        ...turnPayload,
+        "turn-id": turnId,
+        "input-messages": ["旧轮需要整理通知规则"],
+      },
+      paths,
+      {
+        resolvedThreadKind: async () => "main",
+        spawn: (_node, arguments_) => {
+          jobPath = arguments_[2];
+          return {};
+        },
+      },
+    );
+    const records = [
+      {
+        type: "event_msg",
+        payload: {
+          type: "user_message",
+          message: "后来一轮的 Bark Device Key 是 laterKey123456",
+        },
+      },
+    ];
+    if (targetRecord) {
+      records.unshift(targetRecord);
+    }
+    await writeFile(
+      join(paths.sessionRoot, "rollout-main-thread.jsonl"),
+      jsonl(...records),
+    );
+
+    let pushed = null;
+    await deliverTurnJob(jobPath, paths, {
+      sleep: async () => {},
+      pushBark: async (notification) => {
+        pushed = notification;
+      },
+    });
+
+    assert.equal(pushed.body, "💬旧轮需要整理通知规则");
+    assert.doesNotMatch(JSON.stringify(pushed), /laterKey|后来一轮/u);
+  }
+});
+
+test("scheduled jobs persist only a redacted target-bound request name", async (t) => {
+  for (const request of [
+    "我的 Bark Device Key 是 testKey123456",
+    "abCD1234xyz",
+  ]) {
+    const paths = await temporaryPaths();
+    t.after(() => removeTemporaryPaths(paths));
+    let jobPath = "";
+    await scheduleTurnNotification(
+      {
+        ...turnPayload,
+        "input-messages": [request],
+      },
+      paths,
+      {
+        resolvedThreadKind: async () => "main",
+        spawn: (_node, arguments_) => {
+          jobPath = arguments_[2];
+          return {};
+        },
+      },
+    );
+
+    const rawJob = await readFile(jobPath, "utf8");
+    assert.equal(rawJob.includes(request), false);
+    assert.equal(JSON.parse(rawJob).request_name, "example");
+  }
+});
+
 test("spawn failure removes the job, releases lock, and allows retry", async (t) => {
   const paths = await temporaryPaths();
   t.after(() => removeTemporaryPaths(paths));
@@ -316,12 +405,13 @@ test("permission hook schedules an immediate background job offline", async (t) 
   );
   assert.doesNotMatch(rawJob, /sensitive command|tool_input|tool_name/u);
   assert.deepEqual(JSON.parse(rawJob), {
-    schema_version: 1,
+    schema_version: 2,
     kind: "permission",
     thread_id: "main-thread",
     turn_id: "",
     notification_thread_id: "main-thread",
     cwd_name: "example",
+    request_name: "example",
   });
   assert.deepEqual(await auditEvents(paths), []);
 });
@@ -418,12 +508,13 @@ test("subagent permission opens the parent task in Codex Remote", async (t) => {
     },
   );
   assert.deepEqual(JSON.parse(await readFile(jobPath, "utf8")), {
-    schema_version: 1,
+    schema_version: 2,
     kind: "permission",
     thread_id: "child-thread",
     turn_id: "",
     notification_thread_id: "parent-thread",
     cwd_name: "example",
+    request_name: "发布 Codex Remote 跳转",
   });
 
   let pushed = null;

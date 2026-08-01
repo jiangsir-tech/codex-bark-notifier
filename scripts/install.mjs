@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import {
   PRODUCT,
   RUNTIME_CONFIG,
+  acquireLifecycleLock,
   applyRuntimeStage,
   assertNotSymlink,
   assertSafeRuntimeTargets,
@@ -14,6 +15,7 @@ import {
   atomicWrite,
   createBackups,
   createRuntimeSnapshot,
+  captureTextFileState,
   enableHooksFeature,
   hashFile,
   inspectTopLevelNotify,
@@ -28,7 +30,6 @@ import {
   prepareRuntimeStage,
   readDeviceKeyFromFile,
   readManifest,
-  readTextIfPresent,
   removeLegacyRuntimeSnapshots,
   removePermissionHook,
   replaceTopLevelNotify,
@@ -37,6 +38,10 @@ import {
   restoreRuntimeSnapshot,
   runtimeFileHashes,
   parseJsonObject,
+  expectedTextFileState,
+  assertTextFileUnchanged,
+  releaseLifecycleLock,
+  rollbackTextFileMutation,
 } from "./lib/installer-core.mjs";
 
 export const HELP = `Usage: sh scripts/install.sh [options]
@@ -72,10 +77,14 @@ export async function buildInstallPlan({
   nodePath = process.execPath,
   existingManifest = null,
 } = {}) {
-  const configExisted = await pathExists(paths.configToml);
-  const hooksExisted = await pathExists(paths.hooksJson);
-  const configBefore = await readTextIfPresent(paths.configToml);
-  const hooksBefore = await readTextIfPresent(paths.hooksJson);
+  const [configBeforeState, hooksBeforeStateFile] = await Promise.all([
+    captureTextFileState(paths.configToml),
+    captureTextFileState(paths.hooksJson),
+  ]);
+  const configExisted = configBeforeState.exists;
+  const hooksExisted = hooksBeforeStateFile.exists;
+  const configBefore = configBeforeState.content;
+  const hooksBefore = hooksBeforeStateFile.content;
   const notifyBefore = inspectTopLevelNotify(configBefore);
 
   if (existingManifest?.status === "installed") {
@@ -178,9 +187,13 @@ export async function buildInstallPlan({
     configExisted,
     hooksExisted,
     configBefore,
+    configBeforeState,
     hooksBefore,
+    hooksBeforeStateFile,
     configAfter: feature.content,
+    configAfterState: expectedTextFileState(feature.content),
     hooksAfter: hookMerge.content,
+    hooksAfterState: expectedTextFileState(hookMerge.content),
     configChanged: feature.content !== configBefore,
     hooksChanged: hookMerge.content !== hooksBefore,
     previousNotify,
@@ -211,7 +224,11 @@ export async function install({
     return { outcome: "help" };
   }
 
-  await assertSafeRuntimeTargets(paths);
+  const lifecycleLock = options.dryRun
+    ? null
+    : await acquireLifecycleLock(paths);
+  try {
+    await assertSafeRuntimeTargets(paths);
   await assertNotSymlink(paths.configToml, { requireFile: true });
   await assertNotSymlink(paths.hooksJson, { requireFile: true });
   const runtimeConfigState = await inspectRuntimeConfig(paths);
@@ -241,7 +258,19 @@ export async function install({
   });
   let backup;
   let snapshot;
+  let configMutationAttempted = false;
+  let hooksMutationAttempted = false;
   try {
+    await assertTextFileUnchanged(
+      paths.configToml,
+      plan.configBeforeState,
+      "config.toml",
+    );
+    await assertTextFileUnchanged(
+      paths.hooksJson,
+      plan.hooksBeforeStateFile,
+      "hooks.json",
+    );
     backup = await createBackups(paths, [
       paths.configToml,
       paths.hooksJson,
@@ -263,10 +292,22 @@ export async function install({
     }
 
     if (plan.configChanged || !plan.configExisted) {
+      await assertTextFileUnchanged(
+        paths.configToml,
+        plan.configBeforeState,
+        "config.toml",
+      );
+      configMutationAttempted = true;
       await writeAtomic(paths.configToml, plan.configAfter, 0o600);
     }
     if (plan.hooksChanged || !plan.hooksExisted) {
       parseJsonObject(plan.hooksAfter, "merged hooks.json");
+      await assertTextFileUnchanged(
+        paths.hooksJson,
+        plan.hooksBeforeStateFile,
+        "hooks.json",
+      );
+      hooksMutationAttempted = true;
       await writeAtomic(paths.hooksJson, plan.hooksAfter, 0o600);
     }
 
@@ -319,21 +360,39 @@ export async function install({
     console.log("Next: open an interactive Codex CLI, enter /hooks, review and trust the PermissionRequest hook, then restart Codex.");
     return { outcome: "installed", manifest };
   } catch (error) {
-    if (plan.hooksExisted) {
-      await atomicWrite(paths.hooksJson, plan.hooksBefore, 0o600).catch(() => {});
-    } else {
-      await rm(paths.hooksJson, { force: true }).catch(() => {});
+    const rollbackSkipped = [];
+    if (hooksMutationAttempted) {
+      const result = await rollbackTextFileMutation(
+        paths.hooksJson,
+        plan.hooksBeforeStateFile,
+        plan.hooksAfterState,
+      ).catch(() => "concurrent");
+      if (result === "concurrent") rollbackSkipped.push("hooks.json");
     }
-    if (plan.configExisted) {
-      await atomicWrite(paths.configToml, plan.configBefore, 0o600).catch(() => {});
-    } else {
-      await rm(paths.configToml, { force: true }).catch(() => {});
+    if (configMutationAttempted) {
+      const result = await rollbackTextFileMutation(
+        paths.configToml,
+        plan.configBeforeState,
+        plan.configAfterState,
+      ).catch(() => "concurrent");
+      if (result === "concurrent") rollbackSkipped.push("config.toml");
     }
     if (snapshot) {
       await restoreRuntimeSnapshot(paths, snapshot).catch(() => {});
     }
     await removeRuntimeTemporary(stage, snapshot).catch(() => {});
+    if (rollbackSkipped.length) {
+      throw new Error(
+        `${error.message} Rollback preserved concurrently changed ${rollbackSkipped.join(" and ")}.`,
+        { cause: error },
+      );
+    }
     throw error;
+  }
+  } finally {
+    if (lifecycleLock) {
+      await releaseLifecycleLock(lifecycleLock);
+    }
   }
 }
 
