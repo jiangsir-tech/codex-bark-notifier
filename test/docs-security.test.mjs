@@ -108,6 +108,9 @@ test("README stays focused on the six-part Codex workflow", async () => {
   assert.match(readme, /Codex Desktop，新建一个本地任务/u);
   assert.match(readme, /不要只告诉我怎么操作/u);
   assert.match(readme, /<粘贴你自己的 Device Key>/u);
+  assert.equal([...readme.matchAll(/^> \[!IMPORTANT\]$/gmu)].length, 2);
+  assert.match(readme, /> \*\*步骤 1｜获取 Bark Device Key\*\*/u);
+  assert.match(readme, /> \*\*步骤 2｜交给 Codex 自动安装\*\*/u);
   assert.match(readme, /不需要再次提供 Device Key/u);
   assert.match(readme, /sh scripts\/install\.sh --uninstall --dry-run/u);
   assert.match(readme, /sh scripts\/install\.sh --uninstall/u);
