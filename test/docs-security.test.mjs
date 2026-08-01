@@ -22,6 +22,13 @@ function textPromptBlocks(source) {
   );
 }
 
+function section(source, heading, nextHeading) {
+  const start = source.indexOf(`## ${heading}`);
+  assert.notEqual(start, -1);
+  const end = nextHeading ? source.indexOf(`## ${nextHeading}`, start) : -1;
+  return source.slice(start, end === -1 ? undefined : end);
+}
+
 test("convenience prompt supports URL plus Device Key without secondary leakage", async () => {
   const { readme, guide, security } = await documentation();
   const prompts = textPromptBlocks(guide);
@@ -80,7 +87,7 @@ test("convenience prompt supports URL plus Device Key without secondary leakage"
   assert.match(security, /本项目无法验证、控制或删除 Codex 平台/u);
 });
 
-test("README stays focused on the four-part Codex install path", async () => {
+test("README stays focused on the six-part Codex workflow", async () => {
   const { readme } = await documentation();
   const headings = [...readme.matchAll(/^## (.+)$/gmu)].map(
     (match) => match[1],
@@ -91,6 +98,8 @@ test("README stays focused on the four-part Codex install path", async () => {
     "2. iPhone 上的通知效果",
     "3. 做了哪些优化，还有哪些不足",
     "4. 复制给 Codex 安装",
+    "5. 复制给 Codex 更新",
+    "6. 复制给 Codex 卸载",
   ]);
   assert.match(
     readme,
@@ -99,9 +108,55 @@ test("README stays focused on the four-part Codex install path", async () => {
   assert.match(readme, /Codex Desktop，新建一个本地任务/u);
   assert.match(readme, /不要只告诉我怎么操作/u);
   assert.match(readme, /<粘贴你自己的 Device Key>/u);
+  assert.match(readme, /不需要再次提供 Device Key/u);
+  assert.match(readme, /sh scripts\/install\.sh --uninstall --dry-run/u);
+  assert.match(readme, /sh scripts\/install\.sh --uninstall/u);
+  assert.match(readme, /不要使用 --purge/u);
   assert.doesNotMatch(readme, /方式 [ABC]/u);
   assert.doesNotMatch(readme, /手工安装/u);
   assert.doesNotMatch(readme, /^## (?:更新与卸载|开发与发布|常见问题)/gmu);
+});
+
+test("README gives Codex one safe prompt for update and uninstall", async () => {
+  const { readme } = await documentation();
+  const update = section(
+    readme,
+    "5. 复制给 Codex 更新",
+    "6. 复制给 Codex 卸载",
+  );
+  const uninstall = section(readme, "6. 复制给 Codex 卸载");
+  const updatePrompts = textPromptBlocks(update);
+  const uninstallPrompts = textPromptBlocks(uninstall);
+
+  assert.equal(updatePrompts.length, 1);
+  assert.equal(uninstallPrompts.length, 1);
+
+  const updatePrompt = updatePrompts[0];
+  assert.match(updatePrompt, /新的临时目录/u);
+  assert.match(updatePrompt, /如果 Key 缺失就停止/u);
+  assert.match(updatePrompt, /sh scripts\/install\.sh --verify/u);
+  assert.match(updatePrompt, /sh scripts\/install\.sh --dry-run/u);
+  assert.match(updatePrompt, /保留我的自定义 config\.json/u);
+  assert.match(updatePrompt, /sh scripts\/install\.sh --send-test/u);
+  assert.match(updatePrompt, /确认 iPhone 是否实际收到/u);
+  assert.match(updatePrompt, /新增、已变化或未信任/u);
+  assert.match(updatePrompt, /不得自动信任/u);
+  assert.match(updatePrompt, /commit SHA/u);
+
+  const uninstallPrompt = uninstallPrompts[0];
+  assert.match(uninstallPrompt, /sh scripts\/install\.sh --uninstall --dry-run/u);
+  assert.equal(
+    [...uninstallPrompt.matchAll(/sh scripts\/install\.sh --uninstall(?! --dry-run)/gu)]
+      .length,
+    1,
+  );
+  assert.match(uninstallPrompt, /不要使用 --purge/u);
+  assert.match(uninstallPrompt, /公开配置、日志、卸载清单和备份/u);
+  assert.match(uninstallPrompt, /无法安全恢复，就停止/u);
+  assert.match(uninstallPrompt, /临时 state 和 jobs 已清理/u);
+  assert.match(uninstallPrompt, /本地修改过的文件/u);
+  assert.match(uninstallPrompt, /只有我之后明确要求/u);
+  assert.match(uninstallPrompt, /可能留下悬空 Codex 配置/u);
 });
 
 test("privacy prompt keeps Device Key in the user's hidden Terminal input", async () => {
