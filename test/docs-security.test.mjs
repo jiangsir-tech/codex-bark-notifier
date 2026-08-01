@@ -92,7 +92,10 @@ test("README stays focused on the four-part Codex install path", async () => {
     "3. 做了哪些优化，还有哪些不足",
     "4. 复制给 Codex 安装",
   ]);
-  assert.match(readme, /\[直接安装\]\(#4-复制给-codex-安装\)/u);
+  assert.match(
+    readme,
+    /\[快速安装 Codex Bark Notifier\]\(#4-复制给-codex-安装\)/u,
+  );
   assert.match(readme, /Codex Desktop，新建一个本地任务/u);
   assert.match(readme, /不要只告诉我怎么操作/u);
   assert.match(readme, /<粘贴你自己的 Device Key>/u);
