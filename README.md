@@ -1,12 +1,12 @@
 # Codex Bark Notifier
 
-[直接安装](#4-复制给-codex-安装)
+[快速安装 Codex Bark Notifier](#4-复制给-codex-安装)
 
 ## 1. 这是做什么的
 
 目前 Mac 上的 Codex 跑完任务后，iPhone 不会收到通知，这有点影响效率。
 
-这个项目借助手机上的 Bark 解决了这个问题，还针对通知体验做了一些优化。
+这个项目借助手机上的 Bark 应用解决了这个问题，还针对通知体验做了一些优化。
 
 ## 2. iPhone 上的通知效果
 
@@ -55,19 +55,13 @@
 
 ## 4. 复制给 Codex 安装
 
-先在 iPhone 安装 Bark，然后找到自己的 Device Key。
+1. 先在 iPhone 上安装 Bark，找到并复制自己的 Device Key。
 
-Bark 里的推送地址一般长这样：
+   ![Bark Device Key 所在位置](assets/screenshots/bark-device-key-location.png)
 
-```text
-https://api.day.app/你的DeviceKey/推送内容
-```
+2. 打开 Mac 上的 Codex Desktop，新建一个本地任务，把下面整段复制过去，只替换最后一行：
 
-`api.day.app/` 后面的那串字符就是 Device Key。每个人都要使用自己 Bark 里的 Key。
-
-![Bark Device Key 所在位置](assets/screenshots/bark-device-key-location.png)
-
-打开 Mac 上的 Codex Desktop，新建一个本地任务，把下面整段复制过去，只替换最后一行：
+Device Key 不是 Apple ID 或 ChatGPT 密码，但别人拿到后可以给你的 Bark 发通知。把 Key 发给 Codex 后，它会留在这次对话和可能的工具记录里，所以不要把它放进公开仓库、Issue 或截图。
 
 ```text
 请直接在我的 Mac 上安装并验证这个项目，不要只告诉我怎么操作：
@@ -89,7 +83,5 @@ Device Key 可以用于这次安装，但不要在回复、日志或命令中重
 ```
 
 后面如果 Codex 让你确认测试通知，或者让你检查 Hook，照着提示操作就行，其他步骤都交给 Codex。
-
-Device Key 不是 Apple ID 或 ChatGPT 密码，但别人拿到后可以给你的 Bark 发通知，所以不要把它放进公开仓库、Issue 或截图。把 Key 发给 Codex 后，它会留在这次对话和可能的工具记录里。
 
 更完整的安装检查和安全边界在[安装指南](docs/INSTALL_WITH_CODEX.md)和[安全说明](SECURITY.md)里。
