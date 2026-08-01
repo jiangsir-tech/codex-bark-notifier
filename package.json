@@ -7,6 +7,9 @@
   "engines": {
     "node": ">=22"
   },
+  "os": [
+    "darwin"
+  ],
   "scripts": {
     "check": "sh -n scripts/install.sh && node --check src/bark-notify.mjs && node --check scripts/install.mjs && node --check scripts/uninstall.mjs",
     "test": "node --test",
@@ -24,5 +27,9 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/jiangsir-tech/codex-bark-notifier.git"
+  },
+  "homepage": "https://github.com/jiangsir-tech/codex-bark-notifier#readme",
+  "bugs": {
+    "url": "https://github.com/jiangsir-tech/codex-bark-notifier/issues"
   }
 }

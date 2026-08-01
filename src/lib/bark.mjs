@@ -9,6 +9,52 @@ function safeString(value, fallback) {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
 
+function redactExactDeviceKey(value, deviceKey) {
+  const candidate = String(value ?? "");
+  const secret = String(deviceKey ?? "");
+  return secret ? candidate.split(secret).join("[已隐藏]") : candidate;
+}
+
+const INSECURE_LOOPBACK_HOSTS = new Set([
+  "localhost",
+  "127.0.0.1",
+  "[::1]",
+]);
+
+export function validateBarkEndpoint(
+  rawEndpoint,
+  { allowInsecureLoopback = false } = {},
+) {
+  const endpoint = String(rawEndpoint ?? "").trim();
+  let parsed;
+  try {
+    parsed = new URL(endpoint);
+  } catch {
+    throw new Error("The Bark endpoint must be a valid HTTPS URL.");
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error("The Bark endpoint must not contain URL credentials.");
+  }
+  if (parsed.protocol === "https:") {
+    return endpoint;
+  }
+  if (
+    parsed.protocol === "http:" &&
+    allowInsecureLoopback === true &&
+    INSECURE_LOOPBACK_HOSTS.has(parsed.hostname.toLowerCase())
+  ) {
+    return endpoint;
+  }
+  if (parsed.protocol === "http:" && allowInsecureLoopback === true) {
+    throw new Error(
+      "Insecure Bark HTTP is allowed only for loopback hosts: localhost, 127.0.0.1, or ::1.",
+    );
+  }
+  throw new Error(
+    "The Bark endpoint must use HTTPS; insecure loopback HTTP requires allowInsecureLoopback: true.",
+  );
+}
+
 export function codexRemoteUrl(threadId) {
   const candidate = String(threadId ?? "").trim();
   if (!candidate || Array.from(candidate).length > 200) {
@@ -56,11 +102,17 @@ export async function loadRuntimeConfig(paths) {
       ? configured.bark
       : configured;
   const timeout = Number(bark.requestTimeoutMilliseconds);
-  return {
-    barkEndpoint: safeString(
+  const allowInsecureLoopback = bark.allowInsecureLoopback === true;
+  const barkEndpoint = validateBarkEndpoint(
+    safeString(
       bark.endpoint ?? bark.barkEndpoint,
       DEFAULT_RUNTIME_CONFIG.barkEndpoint,
     ),
+    { allowInsecureLoopback },
+  );
+  return {
+    barkEndpoint,
+    allowInsecureLoopback,
     barkIconUrl: safeString(
       bark.icon ?? bark.barkIconUrl,
       DEFAULT_RUNTIME_CONFIG.barkIconUrl,
@@ -82,11 +134,11 @@ export function buildBarkRequestPayload(
   const payload = {
     device_key: deviceKey,
     title: sanitizeNotificationText(
-      notification.title,
+      redactExactDeviceKey(notification.title, deviceKey),
       "通知内容已隐藏",
     ),
     body: sanitizeNotificationText(
-      notification.body,
+      redactExactDeviceKey(notification.body, deviceKey),
       "💬内容含本机路径",
     ),
     group: runtimeConfig.group,
@@ -107,6 +159,9 @@ export async function pushBark(notification, paths, dependencies = {}) {
   const request = dependencies.fetch ?? fetch;
   const runtimeConfig =
     dependencies.runtimeConfig ?? (await loadRuntimeConfig(paths));
+  const barkEndpoint = validateBarkEndpoint(runtimeConfig.barkEndpoint, {
+    allowInsecureLoopback: runtimeConfig.allowInsecureLoopback === true,
+  });
   const deviceKey = String(await read(paths.keyFile, "utf8")).trim();
   if (!deviceKey) {
     const error = new Error("Bark device key is empty");
@@ -114,7 +169,7 @@ export async function pushBark(notification, paths, dependencies = {}) {
     throw error;
   }
 
-  const response = await request(runtimeConfig.barkEndpoint, {
+  const response = await request(barkEndpoint, {
     method: "POST",
     headers: {
       "Content-Type": "application/json; charset=utf-8",

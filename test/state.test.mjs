@@ -75,12 +75,13 @@ test("private jobs use 0700 directory and 0600 regular files", async (t) => {
   const paths = await temporaryPaths();
   t.after(() => removeTemporaryPaths(paths));
   const job = {
-    schema_version: 1,
+    schema_version: 2,
     kind: "turn",
     thread_id: "thread",
     turn_id: "turn",
     notification_thread_id: "thread",
     cwd_name: "project",
+    request_name: "整理通知任务",
     status: "complete",
     delay_ms: 5_000,
   };
@@ -109,6 +110,46 @@ test("private job schema rejects arbitrary payload fields before writing", async
     { code: "EINVAL" },
   );
   await assert.rejects(lstat(paths.jobsDirectory), { code: "ENOENT" });
+});
+
+test("private job schema accepts legacy jobs and bounds the captured request name", async (t) => {
+  const paths = await temporaryPaths();
+  t.after(() => removeTemporaryPaths(paths));
+  const legacyJob = {
+    schema_version: 1,
+    kind: "turn",
+    thread_id: "thread",
+    turn_id: "turn",
+    notification_thread_id: "thread",
+    cwd_name: "project",
+    status: "complete",
+    delay_ms: 5_000,
+  };
+  const legacyPath = await createPrivateJob(legacyJob, paths);
+  assert.deepEqual(await readPrivateJob(legacyPath, paths), legacyJob);
+
+  await assert.rejects(
+    createPrivateJob(
+      {
+        ...legacyJob,
+        schema_version: 2,
+        request_name: "x".repeat(129),
+      },
+      paths,
+    ),
+    { code: "EINVAL" },
+  );
+  await assert.rejects(
+    createPrivateJob(
+      {
+        ...legacyJob,
+        schema_version: 2,
+        request_name: "Bark Device Key 为 testKey123456",
+      },
+      paths,
+    ),
+    { code: "EINVAL" },
+  );
 });
 
 test("consuming a private job unlinks it before returning", async (t) => {

@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import {
   UnsafeManifestError,
   UnsafePathError,
+  acquireLifecycleLock,
   assertNotSymlink,
   assertSafePrivateRoot,
   assertSafePrivateRoots,
@@ -13,15 +14,18 @@ import {
   arraysEqual,
   assertSupportedRuntime,
   atomicWrite,
+  assertTextFileUnchanged,
   cleanupRuntimeEphemera,
   createRuntimeSnapshot,
+  captureTextFileState,
+  expectedTextFileState,
   inspectTopLevelNotify,
   installationPaths,
   legacyRuntimeSnapshotPaths,
   parseArguments,
   pathExists,
   readManifest,
-  readTextIfPresent,
+  releaseLifecycleLock,
   removeManagedRuntimeFiles,
   removeLegacyRuntimeSnapshots,
   removePermissionHook,
@@ -31,6 +35,7 @@ import {
   removeRuntimeTemporary,
   restoreRuntimeSnapshot,
   restoreHooksFeature,
+  rollbackTextFileMutation,
   rewriteManagedNotifyChain,
 } from "./lib/installer-core.mjs";
 
@@ -68,12 +73,14 @@ export async function buildUninstallPlan({
     };
   }
 
-  const configBefore = await readTextIfPresent(paths.configToml);
-  const hooksBefore = await readTextIfPresent(paths.hooksJson);
-  const [configExisted, hooksExisted] = await Promise.all([
-    pathExists(paths.configToml),
-    pathExists(paths.hooksJson),
+  const [configBeforeState, hooksBeforeStateFile] = await Promise.all([
+    captureTextFileState(paths.configToml),
+    captureTextFileState(paths.hooksJson),
   ]);
+  const configBefore = configBeforeState.content;
+  const hooksBefore = hooksBeforeStateFile.content;
+  const configExisted = configBeforeState.exists;
+  const hooksExisted = hooksBeforeStateFile.exists;
   try {
     const notify = inspectTopLevelNotify(configBefore);
     if (!notify.exists) {
@@ -140,11 +147,21 @@ export async function buildUninstallPlan({
       manifest,
       alreadyUninstalled: false,
       configBefore,
+      configBeforeState,
       configExisted,
       configAfter,
+      configAfterState: expectedTextFileState(
+        configAfter,
+        !(manifest.config.fileExisted === false && !configAfter.trim()),
+      ),
       hooksBefore,
+      hooksBeforeStateFile,
       hooksExisted,
       hooksAfter,
+      hooksAfterState: expectedTextFileState(
+        hooksAfter,
+        Boolean(hooksAfter),
+      ),
       configChanged: configAfter !== configBefore,
       removeConfigFile:
         manifest.config.fileExisted === false && !configAfter.trim(),
@@ -258,11 +275,15 @@ export async function uninstall({
     console.log(HELP);
     return { outcome: "help" };
   }
-  if (options.purge) {
-    await assertSafePrivateRoots(paths);
-  } else {
-    await assertSafeRuntimeTargets(paths);
-  }
+  const lifecycleLock = options.dryRun
+    ? null
+    : await acquireLifecycleLock(paths);
+  try {
+    if (options.purge) {
+      await assertSafePrivateRoots(paths);
+    } else {
+      await assertSafeRuntimeTargets(paths);
+    }
   let manifest;
   try {
     manifest = await readManifest(paths);
@@ -274,7 +295,7 @@ export async function uninstall({
         error instanceof UnsafePathError
       )
     ) {
-      return purgeWithoutTrustedRestore({
+      return await purgeWithoutTrustedRestore({
         paths,
         options,
         operations,
@@ -285,7 +306,7 @@ export async function uninstall({
   }
   if (!manifest) {
     if (options.purge) {
-      return purgeWithoutTrustedRestore({
+      return await purgeWithoutTrustedRestore({
         paths,
         options,
         operations,
@@ -300,7 +321,7 @@ export async function uninstall({
     await assertNotSymlink(paths.hooksJson, { requireFile: true });
   } catch (error) {
     if (options.purge && error instanceof UnsafePathError) {
-      return purgeWithoutTrustedRestore({
+      return await purgeWithoutTrustedRestore({
         paths,
         options,
         operations,
@@ -314,7 +335,7 @@ export async function uninstall({
     plan = await buildUninstallPlan({ paths, manifest });
   } catch (error) {
     if (options.purge && error instanceof UnsafeRestorePlanError) {
-      return purgeWithoutTrustedRestore({
+      return await purgeWithoutTrustedRestore({
         paths,
         options,
         operations,
@@ -349,8 +370,28 @@ export async function uninstall({
   const writeAtomic = operations.atomicWrite ?? atomicWrite;
   let preservedModified = [];
   let purgeCommitted = false;
+  let configMutationAttempted = false;
+  let hooksMutationAttempted = false;
   try {
+    if (!plan.alreadyUninstalled) {
+      await assertTextFileUnchanged(
+        paths.configToml,
+        plan.configBeforeState,
+        "config.toml",
+      );
+      await assertTextFileUnchanged(
+        paths.hooksJson,
+        plan.hooksBeforeStateFile,
+        "hooks.json",
+      );
+    }
     if (!plan.alreadyUninstalled && plan.configChanged) {
+      await assertTextFileUnchanged(
+        paths.configToml,
+        plan.configBeforeState,
+        "config.toml",
+      );
+      configMutationAttempted = true;
       if (plan.removeConfigFile) {
         await rm(paths.configToml, { force: true });
       } else {
@@ -358,6 +399,12 @@ export async function uninstall({
       }
     }
     if (!plan.alreadyUninstalled && plan.hooksChanged) {
+      await assertTextFileUnchanged(
+        paths.hooksJson,
+        plan.hooksBeforeStateFile,
+        "hooks.json",
+      );
+      hooksMutationAttempted = true;
       if (plan.hooksAfter) {
         await writeAtomic(paths.hooksJson, plan.hooksAfter, 0o600);
       } else {
@@ -394,16 +441,23 @@ export async function uninstall({
     );
     await chmod(paths.installRoot, 0o700);
   } catch (error) {
+    const rollbackSkipped = [];
     if (!purgeCommitted && !plan.alreadyUninstalled) {
-      if (plan.hooksExisted) {
-        await atomicWrite(paths.hooksJson, plan.hooksBefore, 0o600).catch(() => {});
-      } else {
-        await rm(paths.hooksJson, { force: true }).catch(() => {});
+      if (hooksMutationAttempted) {
+        const result = await rollbackTextFileMutation(
+          paths.hooksJson,
+          plan.hooksBeforeStateFile,
+          plan.hooksAfterState,
+        ).catch(() => "concurrent");
+        if (result === "concurrent") rollbackSkipped.push("hooks.json");
       }
-      if (plan.configExisted) {
-        await atomicWrite(paths.configToml, plan.configBefore, 0o600).catch(() => {});
-      } else {
-        await rm(paths.configToml, { force: true }).catch(() => {});
+      if (configMutationAttempted) {
+        const result = await rollbackTextFileMutation(
+          paths.configToml,
+          plan.configBeforeState,
+          plan.configAfterState,
+        ).catch(() => "concurrent");
+        if (result === "concurrent") rollbackSkipped.push("config.toml");
       }
     }
     if (!purgeCommitted && snapshot) {
@@ -413,6 +467,12 @@ export async function uninstall({
     if (purgeCommitted) {
       throw new Error(
         `Purge reached its irreversible deletion step and only partially completed: ${error.message}`,
+        { cause: error },
+      );
+    }
+    if (rollbackSkipped.length) {
+      throw new Error(
+        `${error.message} Rollback preserved concurrently changed ${rollbackSkipped.join(" and ")}.`,
         { cause: error },
       );
     }
@@ -441,6 +501,11 @@ export async function uninstall({
   return cleanupWarning
     ? { outcome: "uninstalled", preservedModified, cleanupWarning }
     : { outcome: "uninstalled", preservedModified };
+  } finally {
+    if (lifecycleLock) {
+      await releaseLifecycleLock(lifecycleLock);
+    }
+  }
 }
 
 const isDirectExecution =

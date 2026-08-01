@@ -11,6 +11,7 @@ import {
   rm,
   stat,
   symlink,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -20,6 +21,7 @@ import test from "node:test";
 import { install } from "../scripts/install.mjs";
 import {
   atomicWrite,
+  acquireLifecycleLock,
   createRuntimeSnapshot,
   dispatcherSource,
   enableHooksFeature,
@@ -33,6 +35,7 @@ import {
   promptHiddenDeviceKey,
   readDeviceKeyFromFile,
   readManifest,
+  releaseLifecycleLock,
   removeRuntimeTemporary,
   replaceTopLevelNotify,
   rewriteManagedNotifyChain,
@@ -242,6 +245,7 @@ test("fresh install uses direct notify, private permissions, and preserves publi
     {
       bark: {
         endpoint: "https://api.day.app/push",
+        allowInsecureLoopback: false,
         icon:
           "https://raw.githubusercontent.com/jiangsir-tech/codex-bark-icon/c188b28641901dbc8b3497bf9d8a8222243ef811/codex-bark-icon.png",
         group: "Codex",
@@ -1008,6 +1012,284 @@ test("dry-run performs zero writes and does not require a key", async (t) => {
     before,
   );
   assert.equal(await pathExists(legacySnapshot), true);
+});
+
+test("lifecycle lock excludes concurrent installer operations and is reusable", async (t) => {
+  const context = await fixture(t);
+  const first = await acquireLifecycleLock(context.paths);
+  await assert.rejects(
+    acquireLifecycleLock(context.paths),
+    /lifecycle operation is already running/iu,
+  );
+  assert.equal(await releaseLifecycleLock(first), true);
+  const second = await acquireLifecycleLock(context.paths);
+  assert.equal(await releaseLifecycleLock(second), true);
+
+  await mkdir(context.paths.lifecycleLock, { mode: 0o700 });
+  await writeFile(
+    join(context.paths.lifecycleLock, "owner.json"),
+    `${JSON.stringify({
+      product: "codex-bark-notifier",
+      pid: 999_999_999,
+      token: "dead-owner",
+      startedAt: "2000-01-01T00:00:00.000Z",
+    })}\n`,
+    { mode: 0o600 },
+  );
+  const recovered = await acquireLifecycleLock(context.paths);
+  assert.equal(await releaseLifecycleLock(recovered), true);
+});
+
+test("only one concurrent reclaimer can replace the same stale lifecycle lock", async (t) => {
+  const context = await fixture(t);
+  await mkdir(context.paths.lifecycleLock, { mode: 0o700 });
+  await writeFile(
+    join(context.paths.lifecycleLock, "owner.json"),
+    `${JSON.stringify({
+      product: "codex-bark-notifier",
+      pid: 999_999_999,
+      token: "shared-dead-owner",
+      startedAt: "2000-01-01T00:00:00.000Z",
+    })}\n`,
+    { mode: 0o600 },
+  );
+
+  const attempts = await Promise.allSettled(
+    Array.from({ length: 8 }, () => acquireLifecycleLock(context.paths)),
+  );
+  const acquired = attempts.filter((attempt) => attempt.status === "fulfilled");
+  const rejected = attempts.filter((attempt) => attempt.status === "rejected");
+
+  assert.equal(acquired.length, 1);
+  assert.equal(rejected.length, 7);
+  for (const attempt of rejected) {
+    assert.equal(attempt.reason?.code, "CODEX_BARK_LIFECYCLE_BUSY");
+  }
+  assert.equal(await releaseLifecycleLock(acquired[0].value), true);
+  const reused = await acquireLifecycleLock(context.paths);
+  assert.equal(await releaseLifecycleLock(reused), true);
+});
+
+test("an ownerless stale lifecycle lock survives the reclaimer claim mtime", async (t) => {
+  const context = await fixture(t);
+  await mkdir(context.paths.lifecycleLock, { mode: 0o700 });
+  const old = new Date("2000-01-01T00:00:00.000Z");
+  await utimes(context.paths.lifecycleLock, old, old);
+
+  const recovered = await acquireLifecycleLock(context.paths, {
+    staleAfterMilliseconds: 1_000,
+  });
+  assert.equal(await releaseLifecycleLock(recovered), true);
+});
+
+test("an existing recovery claim is preserved and reported as busy", async (t) => {
+  const context = await fixture(t);
+  await mkdir(context.paths.lifecycleLock, { mode: 0o700 });
+  await writeFile(
+    join(context.paths.lifecycleLock, "owner.json"),
+    `${JSON.stringify({
+      product: "codex-bark-notifier",
+      pid: 999_999_999,
+      token: "dead-owner-with-claim",
+      startedAt: "2000-01-01T00:00:00.000Z",
+    })}\n`,
+    { mode: 0o600 },
+  );
+  const claimPath = join(context.paths.lifecycleLock, ".reclaim.json");
+  const claimSource = `${JSON.stringify({
+    product: "codex-bark-notifier",
+    pid: process.pid,
+    token: "active-reclaimer",
+    startedAt: new Date().toISOString(),
+  })}\n`;
+  await writeFile(claimPath, claimSource, { mode: 0o600 });
+
+  await assert.rejects(
+    acquireLifecycleLock(context.paths),
+    (error) => error?.code === "CODEX_BARK_LIFECYCLE_BUSY",
+  );
+  assert.equal(await readFile(claimPath, "utf8"), claimSource);
+});
+
+test("an abandoned recovery claim is reclaimed without manual deletion", async (t) => {
+  const context = await fixture(t);
+  await mkdir(context.paths.lifecycleLock, { mode: 0o700 });
+  await writeFile(
+    join(context.paths.lifecycleLock, "owner.json"),
+    `${JSON.stringify({
+      product: "codex-bark-notifier",
+      pid: 999_999_999,
+      token: "dead-owner-with-abandoned-claim",
+      startedAt: "2000-01-01T00:00:00.000Z",
+    })}\n`,
+    { mode: 0o600 },
+  );
+  await writeFile(
+    join(context.paths.lifecycleLock, ".reclaim.json"),
+    `${JSON.stringify({
+      product: "codex-bark-notifier",
+      pid: 999_999_998,
+      token: "abandoned-reclaimer",
+      startedAt: "2000-01-01T00:00:00.000Z",
+    })}\n`,
+    { mode: 0o600 },
+  );
+
+  const recovered = await acquireLifecycleLock(context.paths, {
+    staleAfterMilliseconds: 1_000,
+  });
+  assert.equal(await releaseLifecycleLock(recovered), true);
+  const reused = await acquireLifecycleLock(context.paths);
+  assert.equal(await releaseLifecycleLock(reused), true);
+});
+
+test("install detects a stale plan without deleting a concurrent config writer", async (t) => {
+  const context = await fixture(t);
+  const concurrentConfig = 'model = "written concurrently"\n';
+  let injected = false;
+  const writeWithConcurrentEdit = async (path, content, mode) => {
+    await atomicWrite(path, content, mode);
+    if (!injected && path === context.paths.runtimeConfig) {
+      injected = true;
+      await writeFile(context.paths.configToml, concurrentConfig);
+    }
+  };
+
+  await assert.rejects(
+    install({
+      argv: ["--key-file", context.keyFile],
+      paths: context.paths,
+      runtime: TEST_RUNTIME,
+      operations: { atomicWrite: writeWithConcurrentEdit },
+    }),
+    /changed concurrently/iu,
+  );
+  assert.equal(
+    await readFile(context.paths.configToml, "utf8"),
+    concurrentConfig,
+  );
+});
+
+test("install rollback preserves config changed after the installer write", async (t) => {
+  const originalConfig = 'model = "before"\n';
+  const originalHooks = '{"hooks":{"Stop":[]}}\n';
+  const context = await fixture(t, {
+    config: originalConfig,
+    hooks: originalHooks,
+  });
+  const concurrentSuffix = '\n# concurrent writer survives\n';
+  const failAfterConcurrentEdit = async (path, content, mode) => {
+    if (path === context.paths.hooksJson) {
+      throw new Error("injected hooks failure");
+    }
+    await atomicWrite(path, content, mode);
+    if (path === context.paths.configToml) {
+      await writeFile(path, `${content}${concurrentSuffix}`);
+    }
+  };
+
+  await assert.rejects(
+    install({
+      argv: ["--key-file", context.keyFile],
+      paths: context.paths,
+      runtime: TEST_RUNTIME,
+      operations: { atomicWrite: failAfterConcurrentEdit },
+    }),
+    /injected hooks failure/iu,
+  );
+  assert.match(
+    await readFile(context.paths.configToml, "utf8"),
+    /concurrent writer survives/u,
+  );
+  assert.equal(await readFile(context.paths.hooksJson, "utf8"), originalHooks);
+});
+
+test("uninstall detects a stale hooks plan and restores only its own config write", async (t) => {
+  const context = await fixture(t, {
+    config: 'model = "before"\n',
+    hooks: '{"hooks":{"Stop":[]}}\n',
+  });
+  await installFixture(context);
+  const configAtStart = await readFile(context.paths.configToml, "utf8");
+  const hooksAtStart = JSON.parse(
+    await readFile(context.paths.hooksJson, "utf8"),
+  );
+  const concurrentHooks = {
+    ...hooksAtStart,
+    hooks: {
+      ...hooksAtStart.hooks,
+      ConcurrentWriter: [
+        { hooks: [{ type: "command", command: "/bin/true" }] },
+      ],
+    },
+  };
+  let injected = false;
+  const writeWithConcurrentHooks = async (path, content, mode) => {
+    await atomicWrite(path, content, mode);
+    if (!injected && path === context.paths.configToml) {
+      injected = true;
+      await writeFile(
+        context.paths.hooksJson,
+        `${JSON.stringify(concurrentHooks, null, 2)}\n`,
+      );
+    }
+  };
+
+  await assert.rejects(
+    uninstall({
+      argv: [],
+      paths: context.paths,
+      runtime: TEST_RUNTIME,
+      operations: { atomicWrite: writeWithConcurrentHooks },
+    }),
+    /hooks\.json changed concurrently/iu,
+  );
+  assert.equal(
+    await readFile(context.paths.configToml, "utf8"),
+    configAtStart,
+  );
+  assert.deepEqual(
+    JSON.parse(await readFile(context.paths.hooksJson, "utf8")),
+    concurrentHooks,
+  );
+  assert.equal((await readManifest(context.paths)).status, "installed");
+});
+
+test("uninstall rollback preserves config changed after its own write", async (t) => {
+  const context = await fixture(t, {
+    config: 'model = "before"\n',
+    hooks: '{"hooks":{"Stop":[]}}\n',
+  });
+  await installFixture(context);
+  const hooksAtStart = await readFile(context.paths.hooksJson, "utf8");
+  const failAfterConcurrentConfig = async (path, content, mode) => {
+    if (path === context.paths.hooksJson) {
+      throw new Error("injected uninstall hooks failure");
+    }
+    await atomicWrite(path, content, mode);
+    if (path === context.paths.configToml) {
+      await writeFile(path, `${content}\n# concurrent writer survives\n`);
+    }
+  };
+
+  await assert.rejects(
+    uninstall({
+      argv: [],
+      paths: context.paths,
+      runtime: TEST_RUNTIME,
+      operations: { atomicWrite: failAfterConcurrentConfig },
+    }),
+    /injected uninstall hooks failure/iu,
+  );
+  assert.match(
+    await readFile(context.paths.configToml, "utf8"),
+    /concurrent writer survives/u,
+  );
+  assert.equal(
+    await readFile(context.paths.hooksJson, "utf8"),
+    hooksAtStart,
+  );
+  assert.equal((await readManifest(context.paths)).status, "installed");
 });
 
 test("real install removes a strictly matched legacy rollback snapshot", async (t) => {

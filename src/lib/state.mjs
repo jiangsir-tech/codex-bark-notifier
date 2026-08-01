@@ -14,11 +14,12 @@ import {
 } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 
-import { payloadIds } from "./text.mjs";
+import { payloadIds, shortenConversationName } from "./text.mjs";
 
 export const STALE_LOCK_MILLISECONDS = 2 * 60 * 1_000;
 export const STALE_JOB_MILLISECONDS = 60 * 60 * 1_000;
-export const PRIVATE_JOB_SCHEMA_VERSION = 1;
+export const PRIVATE_JOB_SCHEMA_VERSION = 2;
+const LEGACY_PRIVATE_JOB_SCHEMA_VERSION = 1;
 const MANAGED_JOB_NAME_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.json$/u;
 
@@ -288,7 +289,7 @@ function exactDataRecord(value, expectedKeys) {
 }
 
 export function validatePrivateJob(job) {
-  const commonKeys = [
+  const legacyCommonKeys = [
     "cwd_name",
     "kind",
     "notification_thread_id",
@@ -297,6 +298,16 @@ export function validatePrivateJob(job) {
     "turn_id",
   ];
   const kind = Object.getOwnPropertyDescriptor(job ?? {}, "kind")?.value;
+  const schemaVersion = Object.getOwnPropertyDescriptor(
+    job ?? {},
+    "schema_version",
+  )?.value;
+  const commonKeys =
+    schemaVersion === LEGACY_PRIVATE_JOB_SCHEMA_VERSION
+      ? legacyCommonKeys
+      : schemaVersion === PRIVATE_JOB_SCHEMA_VERSION
+        ? [...legacyCommonKeys, "request_name"]
+        : [];
   const expectedKeys =
     kind === "turn"
       ? [...commonKeys, "delay_ms"].sort()
@@ -307,12 +318,23 @@ export function validatePrivateJob(job) {
   const values = exactDataRecord(job, expectedKeys);
   if (
     expectedKeys.length === 0 ||
-    values.schema_version !== PRIVATE_JOB_SCHEMA_VERSION ||
+    ![
+      LEGACY_PRIVATE_JOB_SCHEMA_VERSION,
+      PRIVATE_JOB_SCHEMA_VERSION,
+    ].includes(values.schema_version) ||
     !isBoundedString(values.thread_id, 512) ||
     !isBoundedString(values.turn_id, 512) ||
     !isBoundedString(values.notification_thread_id, 512) ||
     !isBoundedString(values.cwd_name, 255) ||
     /[/\\]/u.test(values.cwd_name)
+  ) {
+    throw invalidPrivateJob();
+  }
+  if (
+    values.schema_version === PRIVATE_JOB_SCHEMA_VERSION &&
+    (!isBoundedString(values.request_name, 128) ||
+      values.request_name !==
+        shortenConversationName(values.request_name, values.cwd_name))
   ) {
     throw invalidPrivateJob();
   }
@@ -329,8 +351,8 @@ export function validatePrivateJob(job) {
   }
 
   if (values.kind === "turn") {
-    return {
-      schema_version: PRIVATE_JOB_SCHEMA_VERSION,
+    const canonicalJob = {
+      schema_version: values.schema_version,
       kind: "turn",
       thread_id: values.thread_id,
       turn_id: values.turn_id,
@@ -339,15 +361,23 @@ export function validatePrivateJob(job) {
       status: values.status,
       delay_ms: values.delay_ms,
     };
+    if (values.schema_version === PRIVATE_JOB_SCHEMA_VERSION) {
+      canonicalJob.request_name = values.request_name;
+    }
+    return canonicalJob;
   }
-  return {
-    schema_version: PRIVATE_JOB_SCHEMA_VERSION,
+  const canonicalJob = {
+    schema_version: values.schema_version,
     kind: "permission",
     thread_id: values.thread_id,
     turn_id: values.turn_id,
     notification_thread_id: values.notification_thread_id,
     cwd_name: values.cwd_name,
   };
+  if (values.schema_version === PRIVATE_JOB_SCHEMA_VERSION) {
+    canonicalJob.request_name = values.request_name;
+  }
+  return canonicalJob;
 }
 
 function validatedJobPath(jobPath, paths) {

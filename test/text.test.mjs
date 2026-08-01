@@ -740,6 +740,93 @@ test("assistant summary redacts credentials and falls back from unsafe text", ()
   );
 });
 
+test("credential redaction covers Bark keys with natural-language separators", () => {
+  for (const reply of [
+    "Bark Device Key 为 testKey8，通知已配置。",
+    "我的 bark 密匙是：testKey123456，通知已配置。",
+    "Bark key 就是 `testKey87654321`，通知已配置。",
+    "Bark Device Key 为 `ab.C+$12`，通知已配置。",
+    "Bark Device Key 是 ab,CD1234，通知已配置。",
+    "Bark Device Key 是 ab;CD1234，通知已配置。",
+    "Bark Device Key 是 😀😀😀😀，通知已配置。",
+    "Bark 的 Key 是 testKey123456，通知已配置。",
+    "Bark 里的 Key 是 testKey123456，通知已配置。",
+    "Bark 里面的 Key 为 testKey123456，通知已配置。",
+  ]) {
+    const summary = shortenAssistantSummary(reply, "配置 Bark 通知");
+    assert.doesNotMatch(summary, /testKey|ab[,;]CD1234|😀/u);
+    assert.match(summary, /\[已隐藏\]/u);
+  }
+
+  assert.equal(
+    shortenAssistantSummary(
+      "Device Key 是什么，文档已经补充说明。",
+      "配置 Bark 通知",
+    ),
+    "Device Key 是什么，文档已经补充说明。",
+  );
+  assert.equal(
+    shortenAssistantSummary(
+      "普通 token 是 short，文档已经补充说明。",
+      "配置 Bark 通知",
+    ),
+    "普通 token 是 short，文档已经补充说明。",
+  );
+});
+
+test("conversation names redact credentials and safely fall back when credential-only", () => {
+  assert.equal(
+    shortenConversationName(
+      "我的 Bark Device Key 是 testKey123456",
+      "/tmp/配置通知",
+    ),
+    "配置通知",
+  );
+  const conversation = shortenConversationName(
+    "Bark Device Key 为 testKey123456，请继续配置通知",
+    "/tmp/配置通知",
+  );
+  assert.equal(conversation, "配置通知");
+  assert.equal(
+    shortenConversationName(
+      "abcdefghijklmnopqrstuvwxyz123456",
+      "/tmp/配置通知",
+    ),
+    "配置通知",
+  );
+  assert.equal(
+    shortenConversationName("abCD1234xyz", "/tmp/配置通知"),
+    "配置通知",
+  );
+  assert.equal(
+    shortenConversationName(
+      "ab.CD12+efGH34-ijKL56+mnOP78",
+      "/tmp/配置通知",
+    ),
+    "配置通知",
+  );
+  assert.equal(
+    shortenConversationName("normalword", "/tmp/配置通知"),
+    "normalword",
+  );
+  assert.equal(
+    formatNotification(
+      { icon: "✅", label: "本轮结束" },
+      "通知测试",
+      "abCD1234xyz",
+    ).body,
+    "💬未生成摘要",
+  );
+  assert.equal(
+    formatNotification(
+      { icon: "✅", label: "本轮结束" },
+      "abCD1234xyz",
+      "通知测试完成",
+    ).title,
+    "✅ [未命名任务]本轮结束",
+  );
+});
+
 test("assistant summary and notification body use the wider 46-character limit", () => {
   const longSummary = "答".repeat(ANSWER_SUMMARY_CHARACTER_LIMIT + 1);
   const expected = `${"答".repeat(ANSWER_SUMMARY_CHARACTER_LIMIT)}…`;
