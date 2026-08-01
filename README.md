@@ -55,15 +55,13 @@
 
 ## 4. 复制给 Codex 安装
 
-> [!IMPORTANT]
-> **步骤 1｜获取 Bark Device Key**
+> 🟣 **步骤 1｜获取 Bark Device Key**
 >
 > 先在 iPhone 上安装 Bark，找到并复制自己的 Device Key。
 
 ![Bark Device Key 所在位置](assets/screenshots/bark-device-key-location.png)
 
-> [!IMPORTANT]
-> **步骤 2｜交给 Codex 自动安装**
+> 🟣 **步骤 2｜交给 Codex 自动安装**
 >
 > 打开 Mac 上的 Codex Desktop，新建一个本地任务，把下面整段复制过去，只替换最后一行：
 
