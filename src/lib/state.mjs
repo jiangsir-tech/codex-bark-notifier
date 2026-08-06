@@ -1,7 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants as fileConstants } from "node:fs";
 import {
-  appendFile,
   chmod,
   lstat,
   mkdir,
@@ -11,6 +10,7 @@ import {
   rename,
   stat,
   unlink,
+  utimes,
 } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 
@@ -18,10 +18,14 @@ import { payloadIds, shortenConversationName } from "./text.mjs";
 
 export const STALE_LOCK_MILLISECONDS = 2 * 60 * 1_000;
 export const STALE_JOB_MILLISECONDS = 60 * 60 * 1_000;
+export const SENT_MARKER_RETENTION_MILLISECONDS = 90 * 24 * 60 * 60 * 1_000;
+export const SENT_MARKER_CLEANUP_INTERVAL_MILLISECONDS = 24 * 60 * 60 * 1_000;
+export const AUDIT_LOG_MAX_BYTES = 10 * 1024 * 1024;
 export const PRIVATE_JOB_SCHEMA_VERSION = 2;
 const LEGACY_PRIVATE_JOB_SCHEMA_VERSION = 1;
 const MANAGED_JOB_NAME_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.json$/u;
+const MANAGED_SENT_MARKER_PATTERN = /^[0-9a-f]{64}\.sent$/u;
 
 export function eventKey(payload) {
   const { threadId, turnId } = payloadIds(payload);
@@ -93,9 +97,108 @@ export function safeErrorReason(error) {
   return "unknown_error";
 }
 
-export async function writeAudit(paths, payload, event, details = {}) {
+async function acquireMaintenanceLock(
+  lockPath,
+  { mayRecoverStaleLock = true } = {},
+) {
+  try {
+    const handle = await open(lockPath, "wx", 0o600);
+    await handle.close();
+    return true;
+  } catch (error) {
+    if (error?.code !== "EEXIST") {
+      throw error;
+    }
+  }
+
+  if (mayRecoverStaleLock) {
+    try {
+      const lockInfo = await stat(lockPath);
+      if (Date.now() - lockInfo.mtimeMs > STALE_LOCK_MILLISECONDS) {
+        await removeIfPresent(lockPath);
+        return acquireMaintenanceLock(lockPath, {
+          mayRecoverStaleLock: false,
+        });
+      }
+    } catch {
+      return acquireMaintenanceLock(lockPath, {
+        mayRecoverStaleLock: false,
+      });
+    }
+  }
+
+  return false;
+}
+
+export async function rotateAuditLog(
+  paths,
+  { maximumBytes = AUDIT_LOG_MAX_BYTES } = {},
+) {
+  if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1) {
+    throw new Error("Audit log maximum size must be a positive integer.");
+  }
+
+  let auditInfo;
+  try {
+    auditInfo = await lstat(paths.auditLog);
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+  if (
+    !auditInfo.isFile() ||
+    auditInfo.isSymbolicLink() ||
+    auditInfo.size < maximumBytes
+  ) {
+    return false;
+  }
+
+  const archivePath = paths.auditArchive ?? `${paths.auditLog}.1`;
+  const lockPath = paths.auditRotationLock ?? `${paths.auditLog}.rotate.lock`;
+  if (!(await acquireMaintenanceLock(lockPath))) {
+    return false;
+  }
+
+  try {
+    try {
+      auditInfo = await lstat(paths.auditLog);
+    } catch (error) {
+      if (error?.code === "ENOENT") {
+        return false;
+      }
+      throw error;
+    }
+    if (
+      !auditInfo.isFile() ||
+      auditInfo.isSymbolicLink() ||
+      auditInfo.size < maximumBytes
+    ) {
+      return false;
+    }
+    await rename(paths.auditLog, archivePath);
+    await chmod(archivePath, 0o600);
+    return true;
+  } finally {
+    await removeIfPresent(lockPath);
+  }
+}
+
+export async function writeAudit(
+  paths,
+  payload,
+  event,
+  details = {},
+  { maximumBytes = AUDIT_LOG_MAX_BYTES } = {},
+) {
   try {
     await ensurePrivateDirectory(paths.runtimeRoot);
+    try {
+      await rotateAuditLog(paths, { maximumBytes });
+    } catch {
+      // A rotation problem must not suppress the current audit record.
+    }
     const { threadId, turnId } = payloadIds(payload);
     const record = {
       timestamp: new Date().toISOString(),
@@ -115,12 +218,125 @@ export async function writeAudit(paths, payload, event, details = {}) {
       }
     }
 
-    await appendFile(paths.auditLog, `${JSON.stringify(record)}\n`, {
-      mode: 0o600,
-    });
+    const handle = await open(
+      paths.auditLog,
+      fileConstants.O_APPEND |
+        fileConstants.O_CREAT |
+        fileConstants.O_WRONLY |
+        fileConstants.O_NOFOLLOW,
+      0o600,
+    );
+    try {
+      await handle.writeFile(`${JSON.stringify(record)}\n`, "utf8");
+    } finally {
+      await handle.close();
+    }
     await chmod(paths.auditLog, 0o600);
   } catch {
     // Delivery should not fail only because audit logging failed.
+  }
+}
+
+export async function cleanupExpiredSentMarkers(
+  paths,
+  {
+    now = Date.now(),
+    retentionMilliseconds = SENT_MARKER_RETENTION_MILLISECONDS,
+    minimumIntervalMilliseconds = SENT_MARKER_CLEANUP_INTERVAL_MILLISECONDS,
+  } = {},
+) {
+  if (!Number.isSafeInteger(retentionMilliseconds) || retentionMilliseconds < 1) {
+    throw new Error("Sent marker retention must be a positive integer.");
+  }
+  if (
+    !Number.isSafeInteger(minimumIntervalMilliseconds) ||
+    minimumIntervalMilliseconds < 0
+  ) {
+    throw new Error("Sent marker cleanup interval must be a non-negative integer.");
+  }
+
+  await ensurePrivateDirectory(paths.stateDirectory);
+  const stampPath =
+    paths.stateCleanupStamp ?? join(paths.stateDirectory, ".sent-cleanup");
+  const lockPath =
+    paths.stateCleanupLock ?? join(paths.stateDirectory, ".sent-cleanup.lock");
+  const cleanupIsRecent = async () => {
+    if (minimumIntervalMilliseconds === 0) {
+      return false;
+    }
+    try {
+      const info = await lstat(stampPath);
+      return (
+        info.isFile() &&
+        !info.isSymbolicLink() &&
+        now - info.mtimeMs <= minimumIntervalMilliseconds
+      );
+    } catch {
+      return false;
+    }
+  };
+  if (await cleanupIsRecent()) {
+    return 0;
+  }
+  if (!(await acquireMaintenanceLock(lockPath))) {
+    return 0;
+  }
+
+  try {
+    let entries = [];
+    if (await cleanupIsRecent()) {
+      return 0;
+    }
+    try {
+      entries = await readdir(paths.stateDirectory, { withFileTypes: true });
+    } catch {
+      return 0;
+    }
+
+    let removed = 0;
+    await Promise.all(
+      entries.map(async (entry) => {
+        if (!entry.isFile() || !MANAGED_SENT_MARKER_PATTERN.test(entry.name)) {
+          return;
+        }
+        const candidatePath = join(paths.stateDirectory, entry.name);
+        try {
+          const info = await lstat(candidatePath);
+          if (
+            !info.isFile() ||
+            info.isSymbolicLink() ||
+            now - info.mtimeMs <= retentionMilliseconds
+          ) {
+            return;
+          }
+          await unlink(candidatePath);
+          removed += 1;
+        } catch {
+          // Cleanup is best effort and must not prevent deduplication.
+        }
+      }),
+    );
+    if (!entries.some(
+      (entry) =>
+        entry.isFile() && MANAGED_SENT_MARKER_PATTERN.test(entry.name),
+    )) {
+      return removed;
+    }
+    const stampHandle = await open(
+      stampPath,
+      fileConstants.O_CREAT |
+        fileConstants.O_TRUNC |
+        fileConstants.O_WRONLY |
+        fileConstants.O_NOFOLLOW,
+      0o600,
+    );
+    await stampHandle.close();
+    await chmod(stampPath, 0o600);
+    const stampTime = new Date(now);
+    await utimes(stampPath, stampTime, stampTime);
+    return removed;
+  } finally {
+    await removeIfPresent(lockPath);
   }
 }
 
@@ -138,6 +354,7 @@ export async function acquireEventLock(
   }
 
   await ensurePrivateDirectory(paths.stateDirectory);
+  await cleanupExpiredSentMarkers(paths).catch(() => {});
   const lockPath = join(paths.stateDirectory, `${key}.lock`);
   const sentPath = join(paths.stateDirectory, `${key}.sent`);
 

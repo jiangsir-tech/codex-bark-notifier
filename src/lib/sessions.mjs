@@ -1,5 +1,7 @@
-import { readFile, readdir } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { createReadStream } from "node:fs";
+import { open, readFile, readdir } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
+import { createInterface } from "node:readline";
 
 import {
   normalizeTaskName,
@@ -17,6 +19,127 @@ export const THREAD_KIND_RETRY_DELAYS = Object.freeze([
   2_000,
   4_000,
 ]);
+
+const REVERSE_READ_CHUNK_BYTES = 64 * 1024;
+const MAX_TRANSCRIPT_LINE_BYTES = 16 * 1024 * 1024;
+
+function transcriptRoots(sessionRoot) {
+  return [sessionRoot, join(dirname(sessionRoot), "archived_sessions")].filter(
+    (root, index, roots) => root && roots.indexOf(root) === index,
+  );
+}
+
+async function readableTranscriptPath(transcriptPath) {
+  if (!transcriptPath) {
+    return "";
+  }
+
+  let handle;
+  try {
+    handle = await open(transcriptPath, "r");
+    return (await handle.stat()).isFile() ? transcriptPath : "";
+  } catch {
+    return "";
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+}
+
+async function transcriptPathFromPayload(payload, threadId, sessionRoot) {
+  const preferredPath = await readableTranscriptPath(
+    typeof payload?.transcript_path === "string"
+      ? payload.transcript_path
+      : "",
+  );
+  return (
+    preferredPath ||
+    (await sessionPathForThreadId(threadId, sessionRoot))
+  );
+}
+
+async function* transcriptLinesReverse(
+  transcriptPath,
+  {
+    chunkBytes = REVERSE_READ_CHUNK_BYTES,
+    maxLineBytes = MAX_TRANSCRIPT_LINE_BYTES,
+  } = {},
+) {
+  const handle = await open(transcriptPath, "r");
+  try {
+    let position = (await handle.stat()).size;
+    let lineParts = [];
+    let lineBytes = 0;
+    let skipLine = false;
+
+    function addEarlierPart(part) {
+      if (skipLine || part.length === 0) {
+        return;
+      }
+      lineBytes += part.length;
+      if (lineBytes > maxLineBytes) {
+        lineParts = [];
+        lineBytes = 0;
+        skipLine = true;
+        return;
+      }
+      lineParts.push(Buffer.from(part));
+    }
+
+    function finishLine() {
+      if (skipLine) {
+        lineParts = [];
+        lineBytes = 0;
+        skipLine = false;
+        return null;
+      }
+
+      const line =
+        lineParts.length === 0
+          ? Buffer.alloc(0)
+          : Buffer.concat(lineParts.reverse(), lineBytes);
+      lineParts = [];
+      lineBytes = 0;
+      const end = line.at(-1) === 13 ? line.length - 1 : line.length;
+      return line.toString("utf8", 0, end);
+    }
+
+    while (position > 0) {
+      const bytesToRead = Math.min(chunkBytes, position);
+      position -= bytesToRead;
+      const chunk = Buffer.allocUnsafe(bytesToRead);
+      const { bytesRead } = await handle.read(
+        chunk,
+        0,
+        bytesToRead,
+        position,
+      );
+      const data = bytesRead === chunk.length
+        ? chunk
+        : chunk.subarray(0, bytesRead);
+      let segmentEnd = data.length;
+
+      for (let index = data.length - 1; index >= 0; index -= 1) {
+        if (data[index] !== 10) {
+          continue;
+        }
+        addEarlierPart(data.subarray(index + 1, segmentEnd));
+        const line = finishLine();
+        if (line !== null) {
+          yield line;
+        }
+        segmentEnd = index;
+      }
+      addEarlierPart(data.subarray(0, segmentEnd));
+    }
+
+    const firstLine = finishLine();
+    if (firstLine !== null) {
+      yield firstLine;
+    }
+  } finally {
+    await handle.close();
+  }
+}
 
 export function classifySessionMetaPayload(metaPayload, threadId = "") {
   if (!metaPayload || (threadId && metaPayload.id !== threadId)) {
@@ -46,18 +169,23 @@ export async function sessionPathForThreadId(threadId, sessionRoot) {
     return "";
   }
 
-  try {
-    const sessionFiles = await readdir(sessionRoot, { recursive: true });
-    const suffix = `-${threadId}.jsonl`;
-    const sessionFile = sessionFiles.find(
-      (entry) =>
-        typeof entry === "string" &&
-        basename(entry).endsWith(suffix),
-    );
-    return sessionFile ? join(sessionRoot, sessionFile) : "";
-  } catch {
-    return "";
+  const suffix = `-${threadId}.jsonl`;
+  for (const root of transcriptRoots(sessionRoot)) {
+    try {
+      const sessionFiles = await readdir(root, { recursive: true });
+      const sessionFile = sessionFiles.find(
+        (entry) =>
+          typeof entry === "string" &&
+          basename(entry).endsWith(suffix),
+      );
+      if (sessionFile) {
+        return join(root, sessionFile);
+      }
+    } catch {
+      // Try the active/archive fallback root below.
+    }
   }
+  return "";
 }
 
 export async function sessionMetaFromTranscript(
@@ -69,10 +197,10 @@ export async function sessionMetaFromTranscript(
     return null;
   }
 
+  const input = createReadStream(transcriptPath, { encoding: "utf8" });
+  const rows = createInterface({ input, crlfDelay: Infinity });
   try {
-    const rows = (await readFile(transcriptPath, "utf8")).split(/\r?\n/u);
-    let fallbackMeta = null;
-    for (const row of rows) {
+    for await (const row of rows) {
       if (!row.trim()) {
         continue;
       }
@@ -80,24 +208,53 @@ export async function sessionMetaFromTranscript(
       if (record?.type !== "session_meta") {
         continue;
       }
-      fallbackMeta ??= record.payload;
       if (!threadId || record?.payload?.id === threadId) {
         return record.payload;
       }
+      return allowAnySessionMetaFallback ? record.payload : null;
     }
-    return allowAnySessionMetaFallback ? fallbackMeta : null;
+    return null;
   } catch {
     return null;
+  } finally {
+    rows.close();
+    input.destroy();
   }
 }
 
 export async function threadKind(payload, paths) {
   const { threadId } = payloadIds(payload);
-  const transcriptPath =
-    payload?.transcript_path ||
-    (await sessionPathForThreadId(threadId, paths.sessionRoot));
-  const meta = await sessionMetaFromTranscript(transcriptPath, threadId);
-  return classifySessionMetaPayload(meta, threadId);
+  const preferredPath = await readableTranscriptPath(
+    typeof payload?.transcript_path === "string"
+      ? payload.transcript_path
+      : "",
+  );
+  if (preferredPath) {
+    const preferredMeta = await sessionMetaFromTranscript(
+      preferredPath,
+      threadId,
+    );
+    const preferredKind = classifySessionMetaPayload(
+      preferredMeta,
+      threadId,
+    );
+    if (preferredKind !== "unknown") {
+      return preferredKind;
+    }
+  }
+
+  const fallbackPath = await sessionPathForThreadId(
+    threadId,
+    paths.sessionRoot,
+  );
+  if (!fallbackPath || fallbackPath === preferredPath) {
+    return "unknown";
+  }
+  const fallbackMeta = await sessionMetaFromTranscript(
+    fallbackPath,
+    threadId,
+  );
+  return classifySessionMetaPayload(fallbackMeta, threadId);
 }
 
 export async function resolvedThreadKind(
@@ -164,9 +321,11 @@ export async function taskNameFromIndex(
 
 export async function notificationContext(payload, paths) {
   const { threadId } = payloadIds(payload);
-  const currentTranscript =
-    payload?.transcript_path ||
-    (await sessionPathForThreadId(threadId, paths.sessionRoot));
+  const currentTranscript = await transcriptPathFromPayload(
+    payload,
+    threadId,
+    paths.sessionRoot,
+  );
   const parentThreadId = await parentThreadIdFromTranscript(
     currentTranscript,
     threadId,
@@ -203,10 +362,7 @@ export async function conversationNameFromTranscript(
   }
 
   try {
-    const rows = (await readFile(transcriptPath, "utf8"))
-      .split(/\r?\n/u)
-      .reverse();
-    for (const row of rows) {
+    for await (const row of transcriptLinesReverse(transcriptPath)) {
       if (!row.trim()) {
         continue;
       }
@@ -249,10 +405,7 @@ export async function assistantSummaryFromTranscript(
 
   for (let attempt = 0; attempt <= retryDelays.length; attempt += 1) {
     try {
-      const rows = (await readFile(transcriptPath, "utf8"))
-        .split(/\r?\n/u)
-        .reverse();
-      for (const row of rows) {
+      for await (const row of transcriptLinesReverse(transcriptPath)) {
         if (!row.trim()) {
           continue;
         }

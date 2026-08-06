@@ -169,7 +169,7 @@ test("CODEX_BARK_NODE is an explicit validated override and preserves arguments"
   );
 });
 
-test("PATH node wins bundled runtimes", async (t) => {
+test("bundled runtime wins PATH to avoid versioned package-manager paths", async (t) => {
   const context = await temporaryBootstrapEnvironment(t);
   await createFakeNode(join(context.pathDirectory, "node"), {
     label: "path",
@@ -181,8 +181,8 @@ test("PATH node wins bundled runtimes", async (t) => {
 
   const result = await runBootstrap(context, ["--dry-run"]);
   assert.equal(result.code, 0, result.stderr);
-  assert.match(await invocationLog(context), /^BEGIN:path$/mu);
-  assert.doesNotMatch(await invocationLog(context), /system-chatgpt/u);
+  assert.match(await invocationLog(context), /^BEGIN:system-chatgpt$/mu);
+  assert.doesNotMatch(await invocationLog(context), /^BEGIN:path$/mu);
 });
 
 test("system ChatGPT runtime wins later bundled candidates", async (t) => {

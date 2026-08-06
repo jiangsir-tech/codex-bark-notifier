@@ -13,6 +13,7 @@ import test from "node:test";
 
 import {
   acquireEventLock,
+  cleanupExpiredSentMarkers,
   cleanupStaleJobs,
   consumePrivateJob,
   createPrivateJob,
@@ -20,6 +21,7 @@ import {
   markEventSent,
   readPrivateJob,
   releaseEventLock,
+  rotateAuditLog,
   writeAudit,
 } from "../src/lib/state.mjs";
 import {
@@ -69,6 +71,34 @@ test("a stale lock is recovered exactly once", async (t) => {
   });
   assert.equal(recovered.duplicate, false);
   assert.equal((await lstat(recovered.lockPath)).isFile(), true);
+});
+
+test("sent markers expire after 90 days without weakening recent deduplication", async (t) => {
+  const paths = await temporaryPaths();
+  t.after(() => removeTemporaryPaths(paths));
+  const oldPayload = { "thread-id": "thread", "turn-id": "old" };
+  const recentPayload = { "thread-id": "thread", "turn-id": "recent" };
+  const oldLock = await acquireEventLock(oldPayload, paths);
+  const recentLock = await acquireEventLock(recentPayload, paths);
+  await markEventSent(oldLock);
+  await markEventSent(recentLock);
+
+  const now = Date.now();
+  const old = new Date(now - 91 * 24 * 60 * 60 * 1_000);
+  await utimes(oldLock.sentPath, old, old);
+  assert.equal(
+    await cleanupExpiredSentMarkers(paths, {
+      now,
+      minimumIntervalMilliseconds: 0,
+    }),
+    1,
+  );
+  await assert.rejects(lstat(oldLock.sentPath), { code: "ENOENT" });
+  assert.equal((await lstat(recentLock.sentPath)).isFile(), true);
+
+  const oldAgain = await acquireEventLock(oldPayload, paths);
+  assert.equal(oldAgain.duplicate, false);
+  assert.equal((await acquireEventLock(recentPayload, paths)).duplicate, true);
 });
 
 test("private jobs use 0700 directory and 0600 regular files", async (t) => {
@@ -300,4 +330,25 @@ test("audit log excludes keys, conversation text, and arbitrary details", async 
     /SUPER-SECRET-KEY|PRIVATE ASSISTANT BODY|PRIVATE USER BODY|SHOULD NOT APPEAR/u,
   );
   assert.equal(permissions((await lstat(paths.auditLog)).mode), 0o600);
+});
+
+test("audit log rotates to one private archive before appending", async (t) => {
+  const paths = await temporaryPaths();
+  t.after(() => removeTemporaryPaths(paths));
+  await writeFile(paths.auditLog, "old audit records\n", { mode: 0o644 });
+
+  await writeAudit(
+    paths,
+    { "thread-id": "thread", "turn-id": "turn" },
+    "sent",
+    {},
+    { maximumBytes: 8 },
+  );
+
+  assert.equal(await readFile(paths.auditArchive, "utf8"), "old audit records\n");
+  assert.equal(permissions((await lstat(paths.auditArchive)).mode), 0o600);
+  assert.equal(permissions((await lstat(paths.auditLog)).mode), 0o600);
+  const current = JSON.parse((await readFile(paths.auditLog, "utf8")).trim());
+  assert.equal(current.event, "sent");
+  assert.equal(await rotateAuditLog(paths, { maximumBytes: 10_000 }), false);
 });

@@ -60,12 +60,6 @@ select_node() {
     return 0
   fi
 
-  path_node=$(command -v node 2>/dev/null) || path_node=
-  if [ -n "$path_node" ] && is_supported_node "$path_node"; then
-    printf '%s\n' "$path_node"
-    return 0
-  fi
-
   # The override below is intentionally private to the test suite. Production
   # callers use the literal /Applications root.
   system_applications=${_CODEX_BARK_TEST_APPLICATIONS_ROOT:-/Applications}
@@ -92,6 +86,15 @@ select_node() {
     done
   fi
 
+  # Keep PATH as the final fallback. Homebrew's public bin/node symlink is more
+  # stable than the versioned Cellar path reported by process.execPath, so the
+  # wrapper passes this selected path through to the installer below.
+  path_node=$(command -v node 2>/dev/null) || path_node=
+  if [ -n "$path_node" ] && is_supported_node "$path_node"; then
+    printf '%s\n' "$path_node"
+    return 0
+  fi
+
   print_error "No compatible Node.js runtime found. Node.js ${minimum_node_major}+ is required."
   print_error "Install/update the Codex desktop app, install Node.js ${minimum_node_major}+, or set CODEX_BARK_NODE."
   return 1
@@ -115,6 +118,12 @@ esac
 script_directory=${script_path%/*}
 project_directory=${script_directory%/*}
 node_executable=$(select_node) || exit 1
+case $node_executable in
+  /*) ;;
+  *) node_executable=$PWD/$node_executable ;;
+esac
+_CODEX_BARK_SELECTED_NODE=$node_executable
+export _CODEX_BARK_SELECTED_NODE
 
 case ${1-} in
   --verify)

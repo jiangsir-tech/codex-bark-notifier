@@ -31,6 +31,9 @@ import { fileURLToPath } from "node:url";
 
 export const PRODUCT = "codex-bark-notifier";
 export const SCHEMA_VERSION = 1;
+export const MAX_INSTALL_BACKUPS = 5;
+const MANAGED_BACKUP_DIRECTORY_PATTERN =
+  /^\d{8}T\d{6}\.\d{3}Z$/u;
 export class UnsafeManifestError extends Error {
   constructor(message, options = {}) {
     super(message, options);
@@ -152,6 +155,8 @@ export function installationPaths({
     previousNotify: join(installRoot, "previous-notify.json"),
     manifest: join(installRoot, "installed.json"),
     auditLog: join(installRoot, "bark-notify.log"),
+    auditArchive: join(installRoot, "bark-notify.log.1"),
+    auditRotationLock: join(installRoot, "bark-notify.log.rotate.lock"),
     state: join(installRoot, "state"),
     jobs: join(installRoot, "jobs"),
     configToml: join(codexHome, "config.toml"),
@@ -2020,6 +2025,64 @@ export async function createBackups(paths, files, stamp = timestamp()) {
   return { directory, files: records };
 }
 
+export function capBackupRecords(
+  backups,
+  maximumBackups = MAX_INSTALL_BACKUPS,
+) {
+  if (!Array.isArray(backups)) {
+    throw new Error("Backup records must be an array.");
+  }
+  if (!Number.isSafeInteger(maximumBackups) || maximumBackups < 1) {
+    throw new Error("Backup retention must be a positive integer.");
+  }
+  return backups.slice(-maximumBackups);
+}
+
+export async function pruneBackupDirectories(
+  paths,
+  maximumBackups = MAX_INSTALL_BACKUPS,
+) {
+  if (!Number.isSafeInteger(maximumBackups) || maximumBackups < 1) {
+    throw new Error("Backup retention must be a positive integer.");
+  }
+  const rootMetadata = await assertNotSymlink(paths.backupRoot);
+  if (!rootMetadata) {
+    return 0;
+  }
+  if (!rootMetadata.isDirectory()) {
+    throw new Error(`Backup root is not a directory: ${paths.backupRoot}`);
+  }
+
+  const managedEntries = (await readdir(paths.backupRoot, {
+    withFileTypes: true,
+  }))
+    .filter(
+      (entry) =>
+        entry.isDirectory() &&
+        MANAGED_BACKUP_DIRECTORY_PATTERN.test(entry.name),
+    )
+    .sort((left, right) => left.name.localeCompare(right.name));
+  const removableNames = new Set(
+    managedEntries
+      .slice(0, Math.max(0, managedEntries.length - maximumBackups))
+      .map((entry) => entry.name),
+  );
+  let removed = 0;
+  for (const entry of managedEntries) {
+    const directory = join(paths.backupRoot, entry.name);
+    if (!removableNames.has(entry.name)) {
+      continue;
+    }
+    const metadata = await lstat(directory);
+    if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+      continue;
+    }
+    await rm(directory, { recursive: true, force: true });
+    removed += 1;
+  }
+  return removed;
+}
+
 export function sha256(content) {
   return createHash("sha256").update(content).digest("hex");
 }
@@ -2591,6 +2654,48 @@ export async function readManifest(paths) {
     throw new UnsafeManifestError(
       "installed.json managed files are invalid.",
     );
+  }
+  if (!Array.isArray(manifest.backups)) {
+    throw new UnsafeManifestError(
+      "installed.json backup records must be an array.",
+    );
+  }
+  for (const record of manifest.backups) {
+    const directory = record?.directory;
+    if (
+      !record ||
+      Array.isArray(record) ||
+      typeof record !== "object" ||
+      typeof directory !== "string" ||
+      resolve(directory) !== directory ||
+      dirname(directory) !== resolve(paths.backupRoot) ||
+      !MANAGED_BACKUP_DIRECTORY_PATTERN.test(basename(directory)) ||
+      !Array.isArray(record.files)
+    ) {
+      throw new UnsafeManifestError(
+        "installed.json contains invalid backup records.",
+      );
+    }
+    for (const file of record.files) {
+      const allowedPath = [paths.configToml, paths.hooksJson].includes(
+        file?.path,
+      );
+      const expectedBackup = file?.existed
+        ? join(directory, basename(file.path))
+        : "";
+      if (
+        !file ||
+        Array.isArray(file) ||
+        typeof file !== "object" ||
+        !allowedPath ||
+        typeof file.existed !== "boolean" ||
+        file.backup !== expectedBackup
+      ) {
+        throw new UnsafeManifestError(
+          "installed.json contains invalid backup file records.",
+        );
+      }
+    }
   }
   for (const [file, hash] of Object.entries(manifest.files)) {
     const resolvedFile = resolve(file);
