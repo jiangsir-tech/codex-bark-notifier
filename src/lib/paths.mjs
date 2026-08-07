@@ -22,8 +22,12 @@ export function runtimePaths(entryUrl = import.meta.url, environment = process.e
     configFile: join(runtimeRoot, "config.json"),
     keyFile: join(runtimeRoot, "bark-device-key"),
     stateDirectory: join(runtimeRoot, "state"),
+    stateCleanupStamp: join(runtimeRoot, "state", ".sent-cleanup"),
+    stateCleanupLock: join(runtimeRoot, "state", ".sent-cleanup.lock"),
     jobsDirectory: join(runtimeRoot, "jobs"),
     auditLog: join(runtimeRoot, "bark-notify.log"),
+    auditArchive: join(runtimeRoot, "bark-notify.log.1"),
+    auditRotationLock: join(runtimeRoot, "bark-notify.log.rotate.lock"),
     sessionRoot: join(codexHome, "sessions"),
     sessionIndex: join(codexHome, "session_index.jsonl"),
   };

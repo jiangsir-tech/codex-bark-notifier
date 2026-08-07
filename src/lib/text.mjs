@@ -40,9 +40,14 @@ const LEGACY_CREDENTIAL_ONLY_PATTERN =
 const STANDALONE_CREDENTIAL_PATTERN =
   /^\s*[A-Za-z0-9_-]{28,}\s*[。.!！]?\s*$/u;
 const SHORT_STANDALONE_BARK_KEY_PATTERN =
-  /^(?=\S{8,27}$)(?=\S*[A-Za-z])(?=\S*\d)\S+$/u;
+  /^(?=[A-Za-z0-9_-]{8,27}[。.!！]?$)(?=[A-Za-z0-9_-]*[A-Za-z])(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]+[。.!！]?$/u;
 const PUNCTUATED_STANDALONE_BARK_KEY_PATTERN =
-  /^(?=\S{8,256}$)(?=\S*[A-Za-z])(?=\S*\d)(?=\S*[._+\/-])\S+$/u;
+  /^(?=[A-Za-z0-9._+\/-]{8,256}[。!！]?$)(?=[A-Za-z0-9._+\/-]*[A-Za-z])(?=[A-Za-z0-9._+\/-]*\d)(?=[A-Za-z0-9._+\/-]*[._+\/-])[A-Za-z0-9._+\/-]+[。!！]?$/u;
+const INTERNAL_STATUS_MARKER_PATTERN =
+  /^(?:\[(?:COMPLETE(?:D)?|SUCCESS(?:FUL)?|SUCCEEDED|BLOCKED|ERROR|FAILED|NEEDS[_ -]?(?:INPUT|ACTION|REPLY)|WAITING[_ -]?(?:FOR[_ -]?)?USER)\]\s*)+/iu;
+const INTERNAL_ERROR_STATUS_MARKER_PATTERN =
+  /(?:^|\n)\s*\[(?:BLOCKED|ERROR|FAILED)\](?:\s|$)/iu;
+const LOCAL_PATH_PLACEHOLDER = "__CODEX_LOCAL_PATH__";
 
 function stripBidiControls(value) {
   return String(value ?? "").replace(BIDI_CONTROL_PATTERN, "");
@@ -338,6 +343,10 @@ function stripListMarker(value) {
   );
 }
 
+function stripInternalStatusMarker(value) {
+  return String(value ?? "").replace(INTERNAL_STATUS_MARKER_PATTERN, "");
+}
+
 function truncateSummaryText(rawText, fallback) {
   const safeFallback = stripBidiControls(fallback);
   const candidate =
@@ -412,7 +421,7 @@ export function shortenAssistantSummary(rawText, fallback = "未生成摘要") {
   const candidates = answerSummarySegments(cleanedText)
     .map((segment) =>
       redactSensitiveSummaryValues(
-        stripListMarker(segment.trim())
+        stripInternalStatusMarker(stripListMarker(segment.trim()))
           .replace(/^#{1,6}\s*/u, "")
           .replace(
             /^(?:好的|可以|明白了?|理解(?:了)?|没问题|收到|好哒?|当然|行)[，,。!！\s]+/u,
@@ -611,7 +620,9 @@ const STATUS_DIRECT_REQUEST_CLAUSE_PATTERNS = [
 ];
 const STATUS_CONTINUATION_REQUEST_PATTERNS = [
   /(?:^|[，,；;：:\s])(?:有[^。！？!?；;\n]{0,32})?需要你确认(?:[^。！？!?；;\n]{0,48})/u,
-  /(?:^|[，,；;：:\s])你确认[^。！？!?；;\n]{0,32}(?:的话|后)[^。！？!?；;\n]{0,48}我(?:就|会)/u,
+  /(?:^|[，,；;：:\s])你确认[^。！？!?；;\n]{0,32}(?:的话|后)[^。！？!?；;\n]{0,48}我(?:就|会|再|将|继续)/u,
+  /^(?:等待|等)你[^。！？!?；;\n]{0,40}确认(?:后|以后)/u,
+  /^(?:(?:现在|接下来|目前|这边)\s*)?需要先确认[^。！？!?；;\n]{1,180}/u,
   /(?:^|[，,；;：:\s])(?:下一步|接下来)(?![^。！？!?；;\n]{0,20}(?:我会|我将|系统会|自动))[^。！？!?；;\n]{0,64}(?:发给我|提供给我|上传给我|截图给我|回复|确认|提交给我)/u,
   /(?:^|[，,；;：:\s])(?:下一张(?:先|优先)?|最优先|优先)(?:请)?发(?!送)/u,
   /(?:完成(?:以后|后)|改完(?:保存)?后)[^。！？!?；;\n]{0,48}(?:回复(?:我)?|告诉我|发给我)/u,
@@ -625,7 +636,7 @@ function statusSentences(value) {
         line.match(/[^。！？!?]+(?:[。！？!?]+|$)/gu) ?? [],
     )
     .map((sentence) =>
-      stripListMarker(sentence.trim())
+      stripInternalStatusMarker(stripListMarker(sentence.trim()))
         .replace(/^#{1,6}\s*/u, "")
         .trim(),
     )
@@ -697,7 +708,7 @@ function requiredActionCandidates(value) {
       },
     ];
     const clauses = sentence
-      .split(/(?<!\d)[，,；;：:](?!\d)/u)
+      .split(/(?<!\d)[，,；;](?!\d)/u)
       .map((clause) => clause.trim())
       .filter(Boolean);
     if (clauses.length > 1) {
@@ -726,11 +737,21 @@ function requiredActionPriority(value, inheritedOptional = false) {
     priority += 70;
   }
   if (
-    /你确认[^。！？!?；;\n]{0,32}(?:的话|后)[^。！？!?；;\n]{0,48}我(?:就|会)/u.test(
+    /你确认[^。！？!?；;\n]{0,32}(?:的话|后)[^。！？!?；;\n]{0,48}我(?:就|会|再|将|继续)/u.test(
       text,
     )
   ) {
     priority += 90;
+  }
+  if (/(?:等待|等)你[^。！？!?；;\n]{0,40}确认(?:后|以后)/u.test(text)) {
+    priority += 90;
+  }
+  if (
+    /需要先确认[^。！？!?；;\n]{1,180}/u.test(
+      text,
+    )
+  ) {
+    priority += 80;
   }
   if (/(?:下一步|下一张|接下来|最优先|优先)/u.test(text)) {
     priority += 60;
@@ -765,7 +786,12 @@ function requiredActionPriority(value, inheritedOptional = false) {
 }
 
 function compactRequiredAction(value) {
-  const text = String(value ?? "").trim();
+  const text = String(value ?? "")
+    .trim()
+    .replace(
+      /^(?:(?:现在|接下来|目前|这边)\s*)?需要先确认(?:[一二两三四五六七八九十\d]+)(?:件|项)(?:事)?[：:]/u,
+      "请确认：",
+    );
   if (
     !/(?:回复我|告诉我|发给我|回复(?:\s|[“「『"'`：:]|$))/u.test(text)
   ) {
@@ -788,6 +814,23 @@ function punctuateRequiredAction(value) {
   return `${text}。`;
 }
 
+function isVagueRequiredAction(value) {
+  return /^(?:请)?回复[。！？!?]*$/u.test(
+    String(value ?? "").trim(),
+  );
+}
+
+function safeRequiredActionFallback(value, { sourceContainsLocalPath = false } = {}) {
+  if (sourceContainsLocalPath) {
+    return /确认/u.test(String(value ?? ""))
+      ? "请确认是否继续处理本地文件。"
+      : "请按提示处理本地文件后继续。";
+  }
+  return /确认/u.test(String(value ?? ""))
+    ? "需要你确认后才能继续。"
+    : "需要你回复后才能继续。";
+}
+
 export function notificationBodyFromAssistantReply(
   rawText,
   status,
@@ -806,22 +849,43 @@ export function notificationBodyFromAssistantReply(
     .replace(/~~~[\s\S]*?~~~/gu, " ")
     .replace(/<image\b[\s\S]*?<\/image>/giu, " ")
     .replace(/!\[[^\]]*\]\([^)]*\)/gu, " ")
-    .replace(/\[([^\]]+)\]\([^)]*\)/gu, "$1")
+    .replace(
+      /([：:])\s*\r?\n+\s*`([^`\r\n]+)`/gu,
+      (match, delimiter, codeValue) =>
+        containsAbsoluteLocalPath(codeValue)
+          ? `${delimiter}${LOCAL_PATH_PLACEHOLDER}`
+          : match,
+    )
+    .replace(/\[([^\]]+)\]\(([^)]*)\)/gu, (_match, labelText, target) =>
+      containsAbsoluteLocalPath(target)
+        ? `${labelText}${LOCAL_PATH_PLACEHOLDER}`
+        : labelText,
+    )
     .replace(/\bhttps?:\/\/[^\s<>"'`,;，。！？；、]+/giu, " ")
-    .replace(/::(?:code-comment|created-thread)\{[^}\n]*\}/gu, " ");
+    .replace(/::(?:code-comment|created-thread)\{[^}\n]*\}/gu, " ")
+    .replace(/((?:请)?回复\s*[：:])\s*\r?\n+\s*/gu, "$1");
+
   const candidates = requiredActionCandidates(cleanedText)
-    .map(({ text, inheritedOptional, wholeSentence }) => ({
-      inheritedOptional,
-      wholeSentence,
-      text: redactSensitiveSummaryValues(
-        stripListMarker(text.trim())
-          .replace(/^#{1,6}\s*/u, "")
-          .replace(/[*_`~]/gu, "")
-          .replace(/\s+/gu, " ")
-          .trim(),
-      ),
-    }))
+    .map(({ text, inheritedOptional, wholeSentence }) => {
+      const containsLocalPathPlaceholder = text.includes(
+        LOCAL_PATH_PLACEHOLDER,
+      );
+      return {
+        inheritedOptional,
+        wholeSentence,
+        containsLocalPathPlaceholder,
+        text: redactSensitiveSummaryValues(
+          stripInternalStatusMarker(stripListMarker(text.trim()))
+            .replaceAll(LOCAL_PATH_PLACEHOLDER, "")
+            .replace(/^#{1,6}\s*/u, "")
+            .replace(/[*_`~]/gu, "")
+            .replace(/\s+/gu, " ")
+            .trim(),
+        ),
+      };
+    })
     .filter(({ text }) => Boolean(text))
+    .filter(({ text }) => !isVagueRequiredAction(text))
     .filter(({ text }) => !containsAbsoluteLocalPath(text))
     .filter(({ text }) => {
       const classificationText = textForStatusClassification(text);
@@ -836,8 +900,18 @@ export function notificationBodyFromAssistantReply(
         candidate.text,
         candidate.inheritedOptional,
       ) +
+        (candidate.wholeSentence &&
+        /(?:等待|等)你[^。！？!?；;\n]{0,40}确认(?:后|以后)[^。！？!?；;\n]{0,48}我(?:再|将|继续)/u.test(
+          candidate.text,
+        )
+          ? 5
+          : 0) +
         (candidate.wholeSentence && /[？?]\s*$/u.test(candidate.text)
           ? 10
+          : 0) +
+        (candidate.wholeSentence &&
+        /(?:回复(?:我)?|告诉我|发给我)\s*[：:]/u.test(candidate.text)
+          ? 15
           : 0),
     }));
   const candidate = candidates.reduce((best, current) => {
@@ -851,16 +925,32 @@ export function notificationBodyFromAssistantReply(
       return current;
     }
     return best;
-  }, null)?.text;
-  return candidate
-    ? truncateSummaryText(
-        sanitizeNotificationText(
-          punctuateRequiredAction(compactRequiredAction(candidate)),
-          safeFallback,
-        ),
-        safeFallback,
-      )
-    : shortenAssistantSummary(rawText, fallback);
+  }, null);
+  if (candidate) {
+    if (candidate.containsLocalPathPlaceholder) {
+      return safeRequiredActionFallback(candidate.text, {
+        sourceContainsLocalPath: true,
+      });
+    }
+    const compactCandidate = sanitizeNotificationText(
+      punctuateRequiredAction(compactRequiredAction(candidate.text)),
+      safeFallback,
+    );
+    return isVagueRequiredAction(compactCandidate)
+      ? safeRequiredActionFallback(cleanedText)
+      : truncateSummaryText(compactCandidate, safeFallback);
+  }
+
+  const summaryFallback = shortenAssistantSummary(rawText, fallback);
+  const actionTailContainsLocalPath = statusSentences(cleanedText)
+    .slice(-3)
+    .some((sentence) => containsAbsoluteLocalPath(sentence));
+  return actionTailContainsLocalPath ||
+    isVagueRequiredAction(summaryFallback)
+    ? safeRequiredActionFallback(cleanedText, {
+        sourceContainsLocalPath: actionTailContainsLocalPath,
+      })
+    : summaryFallback;
 }
 
 export function classifyLastReply(lastReply) {
@@ -884,6 +974,7 @@ export function classifyLastReply(lastReply) {
   const unresolvedEnding = withoutResolvedStatusPhrases(decisiveEnding);
 
   if (
+    INTERNAL_ERROR_STATUS_MARKER_PATTERN.test(cleanedReply) ||
     STATUS_ERROR_PATTERN.test(unresolvedSummary) ||
     STATUS_DECISIVE_ERROR_PATTERN.test(unresolvedEnding) ||
     STATUS_FINAL_ERROR_PATTERN.test(

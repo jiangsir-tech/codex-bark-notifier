@@ -13,6 +13,7 @@ import {
   assertSupportedRuntime,
   arraysEqual,
   atomicWrite,
+  capBackupRecords,
   createBackups,
   createRuntimeSnapshot,
   captureTextFileState,
@@ -27,6 +28,7 @@ import {
   pathExists,
   permissionHook,
   promptHiddenDeviceKey,
+  pruneBackupDirectories,
   prepareRuntimeStage,
   readDeviceKeyFromFile,
   readManifest,
@@ -63,7 +65,7 @@ Never pass a Bark key as a command-line value. Without --key-file, a hidden
 interactive prompt is used.`;
 
 function printPlan(plan) {
-  console.log(`Node.js: ${process.execPath} (${process.versions.node})`);
+  console.log(`Node.js: ${plan.managedNotify[0]} (${process.versions.node})`);
   console.log(`Codex home: ${plan.paths.codexHome}`);
   console.log(`Install root: ${plan.paths.installRoot}`);
   console.log(`notify mode: ${plan.notifyMode}`);
@@ -216,8 +218,18 @@ export async function install({
   input = process.stdin,
   output = process.stderr,
   operations = {},
+  environment = process.env,
 } = {}) {
   assertSupportedRuntime(runtime);
+  const selectedNodePath = String(
+    environment._CODEX_BARK_SELECTED_NODE ?? process.execPath,
+  ).trim();
+  if (
+    !selectedNodePath.startsWith("/") ||
+    /[\u0000-\u001f\u007f]/u.test(selectedNodePath)
+  ) {
+    throw new Error("The selected Node.js runtime path is invalid.");
+  }
   const options = parseArguments(argv, "install");
   if (options.help) {
     console.log(HELP);
@@ -233,7 +245,11 @@ export async function install({
   await assertNotSymlink(paths.hooksJson, { requireFile: true });
   const runtimeConfigState = await inspectRuntimeConfig(paths);
   const existingManifest = await readManifest(paths);
-  const plan = await buildInstallPlan({ paths, existingManifest });
+  const plan = await buildInstallPlan({
+    paths,
+    existingManifest,
+    nodePath: selectedNodePath,
+  });
   printPlan(plan);
   if (options.dryRun) {
     console.log("Dry run complete; no files were changed and no key was read.");
@@ -254,7 +270,7 @@ export async function install({
   const stage = await prepareRuntimeStage(paths, {
     notifyMode: plan.notifyMode,
     previousNotify: plan.previousNotify,
-    nodePath: process.execPath,
+    nodePath: selectedNodePath,
   });
   let backup;
   let snapshot;
@@ -318,7 +334,7 @@ export async function install({
       version: "0.1.0",
       status: "installed",
       installRoot: paths.installRoot,
-      nodePath: process.execPath,
+      nodePath: selectedNodePath,
       installedAt:
         existingManifest?.status === "installed"
           ? existingManifest.installedAt
@@ -342,10 +358,10 @@ export async function install({
         managedEntry: plan.managedHook,
         before: plan.hooksBeforeState,
       },
-      backups: [
+      backups: capBackupRecords([
         ...(existingManifest?.backups ?? []),
         backup,
-      ],
+      ]),
       files: {},
     };
     manifest.files = await runtimeFileHashes(paths);
@@ -353,6 +369,7 @@ export async function install({
     parseJsonObject(manifestSource, "installed.json");
     await writeAtomic(paths.manifest, manifestSource, 0o600);
     await removeRuntimeTemporary(stage, snapshot);
+    await pruneBackupDirectories(paths).catch(() => {});
     console.log("Installed Codex Bark Notifier.");
     console.log(`Backup: ${backup.directory}`);
     console.log("Ready now: turn completion, reply-needed, and blocked/error notifications.");

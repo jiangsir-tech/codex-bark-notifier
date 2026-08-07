@@ -1,14 +1,17 @@
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { buildPermissionNotification } from "../src/bark-notify.mjs";
 import {
   assistantSummaryFromTranscript,
   classifySessionMetaPayload,
+  conversationNameFromTranscript,
   notificationContext,
   resolvedThreadKind,
+  sessionMetaFromTranscript,
+  sessionPathForThreadId,
   taskNameFromIndex,
   THREAD_KIND_RETRY_DELAYS,
   threadKind,
@@ -68,6 +71,73 @@ test("thread lookup resolves real main/subagent files and unknown safely", async
       sleep: async () => {},
     }),
     "unknown",
+  );
+});
+
+test("thread lookup falls back to archived sessions", async (t) => {
+  const paths = await temporaryPaths();
+  t.after(() => removeTemporaryPaths(paths));
+  const archivedRoot = join(dirname(paths.sessionRoot), "archived_sessions");
+  await mkdir(archivedRoot, { recursive: true });
+  const archivedTranscript = join(
+    archivedRoot,
+    "rollout-archived-thread.jsonl",
+  );
+  await writeFile(
+    archivedTranscript,
+    jsonl({ type: "session_meta", payload: { id: "archived-thread" } }),
+  );
+
+  assert.equal(
+    await sessionPathForThreadId("archived-thread", paths.sessionRoot),
+    archivedTranscript,
+  );
+  assert.equal(
+    await threadKind({ "thread-id": "archived-thread" }, paths),
+    "main",
+  );
+});
+
+test("thread lookup prefers a supplied transcript and recovers from a stale path", async (t) => {
+  const paths = await temporaryPaths();
+  t.after(() => removeTemporaryPaths(paths));
+  const threadId = "preferred-thread";
+  const discoveredTranscript = join(
+    paths.sessionRoot,
+    `rollout-discovered-${threadId}.jsonl`,
+  );
+  const preferredTranscript = join(
+    paths.root,
+    `rollout-preferred-${threadId}.jsonl`,
+  );
+  await writeFile(
+    discoveredTranscript,
+    jsonl({
+      type: "session_meta",
+      payload: { id: threadId, parent_thread_id: "parent-thread" },
+    }),
+  );
+  await writeFile(
+    preferredTranscript,
+    jsonl({ type: "session_meta", payload: { id: threadId } }),
+  );
+
+  assert.equal(
+    await threadKind(
+      { "thread-id": threadId, transcript_path: preferredTranscript },
+      paths,
+    ),
+    "main",
+  );
+  assert.equal(
+    await threadKind(
+      {
+        "thread-id": threadId,
+        transcript_path: join(paths.root, "moved-away.jsonl"),
+      },
+      paths,
+    ),
+    "subagent",
   );
 });
 
@@ -354,4 +424,69 @@ test("assistant summary falls back when the completed turn is absent or has no f
       "核对通知状态",
     );
   }
+});
+
+test("large transcripts stay readable across reverse chunk boundaries", async (t) => {
+  const paths = await temporaryPaths();
+  t.after(() => removeTemporaryPaths(paths));
+  const threadId = "large-thread";
+  const transcript = join(
+    paths.sessionRoot,
+    `rollout-large-${threadId}.jsonl`,
+  );
+  const filler = "边界填充".repeat(24 * 1024);
+  const records = [
+    { type: "session_meta", payload: { id: threadId } },
+    {
+      type: "event_msg",
+      payload: { type: "user_message", message: "旧的对话问题" },
+    },
+    ...Array.from({ length: 12 }, (_, index) => ({
+      type: "event_msg",
+      payload: { type: "token_count", index, filler },
+    })),
+    {
+      type: "event_msg",
+      payload: { type: "user_message", message: "核验超长会话通知" },
+    },
+    {
+      type: "event_msg",
+      payload: {
+        type: "task_complete",
+        turn_id: "target-turn",
+        last_agent_message: "超长会话现在可以正确发送通知。",
+      },
+    },
+    ...Array.from({ length: 12 }, (_, index) => ({
+      type: "event_msg",
+      payload: { type: "token_count", index: index + 12, filler },
+    })),
+    {
+      type: "event_msg",
+      payload: {
+        type: "task_complete",
+        turn_id: "newer-turn",
+        last_agent_message: "另一轮的结果不能覆盖目标轮。",
+      },
+    },
+  ];
+  await writeFile(transcript, jsonl(...records));
+
+  assert.deepEqual(
+    await sessionMetaFromTranscript(transcript, threadId),
+    { id: threadId },
+  );
+  assert.equal(
+    await conversationNameFromTranscript(transcript),
+    "核验超长会话通知",
+  );
+  assert.equal(
+    await assistantSummaryFromTranscript(
+      transcript,
+      "target-turn",
+      "摘要回退",
+      { retryDelays: [] },
+    ),
+    "超长会话现在可以正确发送通知。",
+  );
 });

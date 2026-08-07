@@ -18,8 +18,12 @@ export async function temporaryPaths() {
     configFile: join(runtimeRoot, "config.json"),
     keyFile: join(runtimeRoot, "bark-device-key"),
     stateDirectory: join(runtimeRoot, "state"),
+    stateCleanupStamp: join(runtimeRoot, "state", ".sent-cleanup"),
+    stateCleanupLock: join(runtimeRoot, "state", ".sent-cleanup.lock"),
     jobsDirectory: join(runtimeRoot, "jobs"),
     auditLog: join(runtimeRoot, "bark-notify.log"),
+    auditArchive: join(runtimeRoot, "bark-notify.log.1"),
+    auditRotationLock: join(runtimeRoot, "bark-notify.log.rotate.lock"),
     sessionRoot,
     sessionIndex: join(codexHome, "session_index.jsonl"),
   };

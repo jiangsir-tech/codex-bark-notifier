@@ -22,6 +22,7 @@ import { install } from "../scripts/install.mjs";
 import {
   atomicWrite,
   acquireLifecycleLock,
+  capBackupRecords,
   createRuntimeSnapshot,
   dispatcherSource,
   enableHooksFeature,
@@ -33,6 +34,7 @@ import {
   pathExists,
   prepareRuntimeStage,
   promptHiddenDeviceKey,
+  pruneBackupDirectories,
   readDeviceKeyFromFile,
   readManifest,
   releaseLifecycleLock,
@@ -83,6 +85,63 @@ async function installFixture(context, argv = ["--key-file"]) {
 function fileMode(metadata) {
   return metadata.mode & 0o777;
 }
+
+test("backup retention keeps five recent managed snapshots only", async (t) => {
+  const context = await fixture(t);
+  const names = Array.from(
+    { length: 7 },
+    (_, index) => `2026080${index + 1}T120000.000Z`,
+  );
+  await mkdir(context.paths.backupRoot, { recursive: true, mode: 0o700 });
+  for (const name of names) {
+    await mkdir(join(context.paths.backupRoot, name), { mode: 0o700 });
+  }
+  const unrelated = join(context.paths.backupRoot, "keep-me");
+  await mkdir(unrelated);
+
+  const allRecords = names.map((name) => ({
+    directory: join(context.paths.backupRoot, name),
+    files: [],
+  }));
+  const kept = capBackupRecords(allRecords);
+  assert.deepEqual(
+    kept.map((record) => record.directory),
+    allRecords.slice(-5).map((record) => record.directory),
+  );
+  assert.equal(await pruneBackupDirectories(context.paths), 2);
+  assert.deepEqual(
+    (await readdir(context.paths.backupRoot)).sort(),
+    [...names.slice(-5), "keep-me"].sort(),
+  );
+});
+
+test("invalid backup metadata stops upgrades without deleting snapshots", async (t) => {
+  const context = await fixture(t);
+  await installFixture(context);
+  const extraBackup = join(
+    context.paths.backupRoot,
+    "20260809T120000.000Z",
+  );
+  await mkdir(extraBackup, { mode: 0o700 });
+
+  const manifest = JSON.parse(await readFile(context.paths.manifest, "utf8"));
+  manifest.backups = {};
+  await writeFile(
+    context.paths.manifest,
+    `${JSON.stringify(manifest, null, 2)}\n`,
+    { mode: 0o600 },
+  );
+  const before = (await readdir(context.paths.backupRoot)).sort();
+
+  await assert.rejects(
+    installFixture(context),
+    /backup records must be an array/iu,
+  );
+  assert.deepEqual(
+    (await readdir(context.paths.backupRoot)).sort(),
+    before,
+  );
+});
 
 test("key inputs reject argv secrets and unsafe source files", async (t) => {
   const sentinel = `DO_NOT_PERSIST_${process.hrtime.bigint()}`;

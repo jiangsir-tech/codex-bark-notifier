@@ -198,6 +198,13 @@ test("reply classification covers real continuation requests without optional fa
     "有一个隐私变化需要你确认。你确认允许保存后，我就可以实现。",
     "不用一次发齐，可以逐个平台发。最优先发未来30天内最早到期的那笔。",
     "两笔账单已经并入。下一张优先发京东金条的还款计划。",
+    "方案已经整理。你确认后我再修改配置。",
+    "草稿已经准备好。你确认后我将提交。",
+    "剩余步骤已列出。你确认后我继续发布。",
+    "草稿已经准备好。等你审阅并确认后，我再发布。",
+    "现在需要先确认三件事，才能继续处理。",
+    "需要先确认页面状态，才能得出结论。",
+    "现在需要先确认四件事：第18间房是谁、201押金到底是多少、40元是什么、退押金300走现金还是微信。确认后才能得出准确利润和剩余现金。",
   ];
   for (const reply of replies) {
     assert.deepEqual(classifyLastReply(reply), {
@@ -220,6 +227,8 @@ test("reply classification covers real continuation requests without optional fa
     "下一张截图将自动发送。",
     "请先做一次验收。后来我已代你完成，不需要你操作。",
     "请先点击确认；刚刚已经完成，不需要你操作。",
+    "建议你确认后再继续使用，本轮无需回复。",
+    "这里说明需要先确认参数才能继续，规则已经通过。",
   ]) {
     assert.deepEqual(classifyLastReply(reply), {
       icon: "✅",
@@ -322,6 +331,102 @@ test("reply notification body prioritizes the concrete user action", () => {
       "整理个人负债",
     ),
     "下一张优先发京东金条64,552元的还款计划。",
+  );
+  assert.equal(
+    notificationBodyFromAssistantReply(
+      "方案已整理。请回复：继续安装、稍后处理，或取消。",
+      status,
+      "选择安装方案",
+    ),
+    "请回复：继续安装、稍后处理，或取消。",
+  );
+  assert.equal(
+    notificationBodyFromAssistantReply(
+      "[NEEDS_INPUT] 请回复：继续安装或停止。",
+      status,
+      "选择安装方案",
+    ),
+    "请回复：继续安装或停止。",
+  );
+  assert.equal(
+    notificationBodyFromAssistantReply(
+      "请回复。",
+      status,
+      "选择安装方案",
+    ),
+    "需要你回复后才能继续。",
+  );
+  assert.equal(
+    notificationBodyFromAssistantReply(
+      "请回复：",
+      status,
+      "选择安装方案",
+    ),
+    "需要你回复后才能继续。",
+  );
+  assert.equal(
+    notificationBodyFromAssistantReply(
+      "请回复：https://example.com",
+      status,
+      "选择安装方案",
+    ),
+    "需要你回复后才能继续。",
+  );
+  assert.equal(
+    notificationBodyFromAssistantReply(
+      "若同意以上规则，请回复：\n\n`封面默认不插入视频，按这些规则修改 Skill。`",
+      status,
+      "确认视频规则",
+    ),
+    "若同意以上规则，请回复：封面默认不插入视频，按这些规则修改 Skill。",
+  );
+  assert.equal(
+    notificationBodyFromAssistantReply(
+      "正式文件是 [SKILL.md](/Users/example/private/SKILL.md)。\n\n若同意以上规则，请回复：\n\n`按这些规则修改 Skill。`",
+      status,
+      "确认 Skill 规则",
+    ),
+    "若同意以上规则，请回复：按这些规则修改 Skill。",
+  );
+  assert.equal(
+    notificationBodyFromAssistantReply(
+      "草稿已完成。等你审阅并确认后，我再修改正式版本。",
+      status,
+      "审阅草稿",
+    ),
+    "等你审阅并确认后，我再修改正式版本。",
+  );
+  assert.equal(
+    notificationBodyFromAssistantReply(
+      "现在需要先确认四件事：第18间房是谁、201押金到底是多少、40元是什么、退押金300走现金还是微信。确认后才能得出准确结果。",
+      status,
+      "核对账目",
+    ),
+    "请确认：第18间房是谁、201押金到底是多少、40元是什么、退押金300走现金还是微信。",
+  );
+  assert.equal(
+    notificationBodyFromAssistantReply(
+      "你确认后，我再修改 /Users/example/private/config.json 里的设置。",
+      status,
+      "更新通知配置",
+    ),
+    "请确认是否继续处理本地文件。",
+  );
+  assert.equal(
+    notificationBodyFromAssistantReply(
+      "你确认后，我就点击 Relink File，选择 [本地素材](/Users/example/private/video.mp4)。",
+      status,
+      "重新关联素材",
+    ),
+    "请确认是否继续处理本地文件。",
+  );
+  assert.equal(
+    notificationBodyFromAssistantReply(
+      "你确认后，我就点击 Relink File，选择：\n\n`/Users/example/private/video.mp4`",
+      status,
+      "重新关联素材",
+    ),
+    "请确认是否继续处理本地文件。",
   );
 });
 
@@ -661,6 +766,25 @@ test("assistant summary removes hidden markers and avoids cutting a complete cla
     ),
     "点击 Bark 通知可以直接进入 ChatGPT 的 Codex Remote 界面。",
   );
+  for (const [marker, expected] of [
+    ["COMPLETE", "通知优化完成。"],
+    ["SUCCESS", "通知测试通过。"],
+    ["BLOCKED", "当前无法继续。"],
+    ["NEEDS_INPUT", "请确认是否继续。"],
+  ]) {
+    assert.equal(
+      shortenAssistantSummary(`[${marker}] ${expected}`, "通知状态"),
+      expected,
+    );
+  }
+  assert.deepEqual(classifyLastReply("[BLOCKED] 当前无法继续。"), {
+    icon: "⛔",
+    label: "受阻或出错",
+  });
+  assert.deepEqual(classifyLastReply("[NEEDS_INPUT] 请确认是否继续。"), {
+    icon: "🔁",
+    label: "需要你回复",
+  });
   assert.equal(
     shortenAssistantSummary(
       "通知结果已确认：点击 Bark 通知可以直接进入 ChatGPT 的 Codex RemoteSettingsPanel 并显示结果。",
@@ -772,6 +896,25 @@ test("credential redaction covers Bark keys with natural-language separators", (
     ),
     "普通 token 是 short，文档已经补充说明。",
   );
+});
+
+test("natural Chinese result sentences are not mistaken for standalone Bark keys", () => {
+  for (const reply of [
+    "原因找到了：网页端读不到本地4K音轨。",
+    "网页端声音已修复，4K画面保持不变。",
+    "建议取消1400元Pro，但不要和别人共用账号。",
+  ]) {
+    const summary = shortenAssistantSummary(reply, "通知结果");
+    assert.notEqual(summary, "未生成摘要");
+    assert.equal(
+      formatNotification(
+        { icon: "✅", label: "本轮结束" },
+        "通知检查",
+        summary,
+      ).body,
+      `💬${summary}`,
+    );
+  }
 });
 
 test("conversation names redact credentials and safely fall back when credential-only", () => {
